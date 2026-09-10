@@ -1,29 +1,29 @@
-# 🚀 gemini2API - Self-Hosted Gemini API Gateway
+# 🚀 gemini2API - Self-Hosted Google Gemini API Gateway
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.24+-00ADD8.svg?style=for-the-badge&logo=go&logoColor=white" alt="Go 1.24+" />
   <img src="https://img.shields.io/badge/React-19-61DAFB.svg?style=for-the-badge&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/API-OpenAI%20%7C%20Anthropic%20%7C%20Gemini-green.svg?style=for-the-badge" alt="Multi-Protocol API" />
-  <img src="https://img.shields.io/badge/WAF-Bypass%20Android%20APK-orange.svg?style=for-the-badge" alt="WAF Bypass" />
+  <img src="https://img.shields.io/badge/Engine-Google%20StreamGenerate-orange.svg?style=for-the-badge" alt="Google StreamGenerate" />
   <img src="https://img.shields.io/badge/Platform-Termux%20%7C%20Linux%20VPS-blue.svg?style=for-the-badge" alt="Termux & Linux" />
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=for-the-badge" alt="License GPL-3.0" />
 </p>
 
-Gateway AI mandiri berkinerja tinggi (*High-Performance Self-Hosted Gateway*) yang mengonversi kemampuan resmi **Gemini AI** menjadi API standar yang kompatibel penuh dengan **OpenAI**, **Anthropic**, dan **Google Gemini**.
+Gateway AI mandiri berkinerja tinggi (*High-Performance Self-Hosted Gateway*) yang mengonversi kemampuan antarmuka web resmi **Google Gemini** (`gemini.google.com`) menjadi API standar yang kompatibel penuh dengan **OpenAI API**, **Anthropic Messages**, dan **Google Gemini REST API**.
 
-Dilengkapi sistem **Bypass Alibaba Cloud WAF (RGV587_ERROR)** berbasis protokol Android APK resmi, dukungan **Tool Calling / Function Calling** untuk AI Coding Agent, serta WebUI modern berbahasa Indonesia yang ringan dan siap jalan di **Android Termux** maupun **Server VPS Linux**.
+Dilengkapi reverse-engine protokol web **Google StreamGenerate RPC**, bypass signature **SAPISIDHASH**, ekstraksi CSRF otomatis (`SNlM0e`), dukungan **Tool Calling / Function Calling** untuk AI Coding Agent, serta WebUI modern berbahasa Indonesia yang ringan dan siap jalan di **Android Termux** maupun **Server VPS Linux**.
 
 ---
 
 ## 🌟 Fitur Utama
 
-- 🛡️ **Bypass Alibaba Cloud WAF (Anti RGV587_ERROR)**: Mengintegrasikan protokol resmi Android APK (`ai.geminilm.chat.android`), signature token `app_waf`, dan ID perangkat unik dinamis. Permintaan terbebas dari blokir tantangan JavaScript slider captcha.
-- 🔑 **Login Otomatis Email & Sandi**: Login langsung ke server Gemini (`/api/v2/auths/signin`) dengan enkripsi kata sandi SHA-256. Tidak perlu repot membuka DevTools / F12 untuk menyalin token sesi secara manual (opsi token manual tetap tersedia untuk login Google OAuth).
+- ⚡ **Google StreamGenerate RPC Native**: Mengintegrasikan protokol resmi web Google Gemini (`BardFrontendService/StreamGenerate`) dengan signature `SAPISIDHASH` dan ekstraksi token CSRF (`SNlM0e`) dinamis.
+- 🍪 **Manajemen Cookie Fleksibel**: Dukungan penuh input cookie via WebUI dashboard — bisa paste string cookie mentah maupun ekspor **JSON array langsung dari Cookie-Editor / EditThisCookie**.
 - 🛠️ **AI Agent & Tool Calling Support (100% Works)**: Kompatibel penuh dengan spesifikasi Function Calling OpenAI (`tools` & `tool_calls`) dan Anthropic (`tool_use`). Teruji sukses untuk autonomous agent seperti **Cline**, **Roo Code**, **Claude Code**, **Cursor**, dan **LangChain**.
-- 🖼️ **Image & Video Lab (WanX Media)**: Mendukung pembuatan gambar AI (`/v1/images/generations`) dan video AI (`/v1/videos/generations`) dengan built-in **Media Proxy** dan kebijakan `no-referrer`, mencegah galat `403 denied by Referer ACL` dari CDN Alibaba Cloud.
-- 🔄 **Account Pool & Rotasi Otomatis**: Manajemen multi-akun dengan auto-failover, pelacakan rate limit terpisah (chat, image, video), dan sistem sesi pra-hangat (*pre-warm pool*) untuk respons instan.
+- 🎨 **Image Lab (Google Imagen 3)**: Mendukung pembuatan gambar AI via prompt teks maupun endpoint `/v1/images/generations` berbasis Google Imagen 3 bawaan Gemini.
+- 🔄 **Account Pool & Rotasi Otomatis**: Manajemen multi-akun dengan auto-failover, pelacakan rate limit, cooldown handling, dan rotasi round-robin.
 - 🎨 **WebUI Dashboard Modern**: Dashboard berbasis React 19 + Tailwind CSS + Lucide Icons yang bersih, responsif, dan 100% berbahasa Indonesia untuk mengelola akun, API key, konfigurasi runtime, dan uji coba interaktif.
-- 📱 **Termux & VPS Native**: Backend ditulis murni dalam bahasa **Go** dengan penggunaan RAM sangat minim (< 50MB) tanpa ketergantungan browser headless berat (Playwright/Chromium) untuk operasional API harian.
+- 📱 **Termux & VPS Native**: Backend ditulis murni dalam bahasa **Go** dengan penggunaan RAM sangat minim (< 30MB) tanpa ketergantungan browser headless berat (Playwright/Chromium) untuk operasional API harian.
 
 ---
 
@@ -35,22 +35,22 @@ Dilengkapi sistem **Bypass Alibaba Cloud WAF (RGV587_ERROR)** berbasis protokol 
                        ▼  (OpenAI / Anthropic / Gemini Format)
              [gemini2API Gateway :7860]
   ├── 1. Autentikasi API Key Klien & Rate Limiter
-  ├── 2. Pool Manager: Pilih Akun Sehat (Round-Robin)
+  ├── 2. Pool Manager: Pilih Akun Google Sehat (Round-Robin)
   ├── 3. Injeksi Skema Tool Calling & System Prompt
-  └── 4. Format Protokol Android APK Resmi:
-         ├── User-Agent: Dalvik/2.1.0 ... AliApp(QWENCHAT/2.5.1)
-         ├── X-Platform: android | source: app
-         ├── Header Keamanan: app_waf + x-device-id
-         └── Cookie Jar Sesi Otomatis (acw_tc, dll.)
+  └── 4. Format Protokol Web Google Gemini:
+         ├── Cookie Header (__Secure-1PSID, SAPISID, SID, dll.)
+         ├── Authorization: SAPISIDHASH {timestamp}_{sha1}
+         ├── Ekstraksi CSRF Token (SNlM0e / at) & Server Build (bl)
+         └── Payload 80-element Array (f.req)
                        │
-                       ▼  (Direct HTTPS Request - Bebas WAF Slider)
-           [Alibaba Cloud Gemini Upstream Server]
+                       ▼  (Direct HTTPS StreamGenerate)
+           [Google Gemini Web Server (gemini.google.com)]
                        │
-                       ▼  (Server-Sent Events / SSE Stream)
+                       ▼  (RPC Chunk Stream / wrb.fr packets)
              [gemini2API Gateway :7860]
-  ├── 1. Parser Tool Calling & Ekstraksi Argumen JSON
-  ├── 2. Streaming Token Respon ke Klien
-  └── 3. Sanitasi Media CDN via Internal Media Proxy
+  ├── 1. Parser wrb.fr Stream & Ekstraksi Teks Delta
+  ├── 2. Parser Tool Calling & Ekstraksi Argumen JSON
+  └── 3. Streaming Server-Sent Events (SSE) Standar OpenAI ke Klien
                        │
                        ▼
 [AI Client / Agent Menerima Respons / Eksekusi Tool Sempurna! 🎉]
@@ -67,7 +67,7 @@ Dilengkapi sistem **Bypass Alibaba Cloud WAF (RGV587_ERROR)** berbasis protokol 
 pkg update -y && pkg install git golang nodejs-lts -y
 
 # Clone repositori
-git clone https://github.com/Cxslin/gemini2API.git
+git clone https://github.com/HiuraKiyowoo/gemini2API.git
 cd gemini2API
 
 # Jalankan build backend dan frontend otomatis
@@ -95,216 +95,64 @@ Akses Web Dashboard melalui browser di: **`http://localhost:7860`** (atau `http:
 
 ### 3. Cara Update ke Versi Terbaru 🔄
 
-Jika terdapat pembaruan fitur atau perbaikan di repositori GitHub, Anda dapat memperbarui proyek dengan sangat mudah:
-
-#### Opsi A: Menggunakan Skrip Otomatis (Rekomendasi)
 ```bash
 ./update.sh
-```
-*Skrip ini akan otomatis menghentikan server lama, menarik commit terbaru dari GitHub, mengompilasi ulang frontend & backend, lalu menyalakan kembali layanan.*
-
-#### Opsi B: Langkah Manual
-```bash
-# 1. Hentikan server yang sedang berjalan
-./stop.sh
-
-# 2. Ambil update terbaru dari GitHub
-git pull origin main
-
-# 3. Kompilasi ulang frontend & backend
-cd frontend && npm install && npm run build && cd ..
-cd backend && go build -trimpath -ldflags="-s -w" -o ../bin/gemini2api-backend . && cd ..
-
-# 4. Jalankan kembali di background
-./start.sh -d
 ```
 
 ---
 
-## 🔑 Konfigurasi & Login Akun
+## 🔑 Konfigurasi & Cara Input Akun Google Gemini
 
 1. Buka WebUI di browser: `http://localhost:7860`.
-2. Masukkan Admin Key default: `admin123456` (dapat diubah di menu **Pengaturan Sistem**).
+2. Masukkan Admin Key default: `admin123456` (dapat diubah di `.env` atau menu Pengaturan).
 3. Buka tab **Manajemen Akun**:
-   - **Metode 1 (Rekomendasi)**: Masukkan **Email** dan **Kata Sandi** akun Gemini Anda, lalu klik **Simpan / Login Akun**. Sistem akan login otomatis via API resmi.
-   - **Metode 2 (Google OAuth)**: Jika mendaftar via Google Sign-In, salin `token` dari Local Storage browser dan tempel di kolom token manual.
+   - Buka browser Anda di [gemini.google.com](https://gemini.google.com) (pastikan sudah login).
+   - Buka ekstensi **Cookie-Editor** (atau DevTools > Application > Cookies).
+   - Salin cookie akun Anda:
+     - **Opsi A (Paling Mudah)**: Klik tombol Export di Cookie-Editor (format JSON), lalu langsung paste ke kolom **Tempel Cookie Google / Token** di dashboard.
+     - **Opsi B (Format String)**: Salin string cookie mentah yang mengandung `__Secure-1PSID` dan `SAPISID`.
+   - Klik **Simpan / Login Akun**. Backend akan otomatis memvalidasi ke server Google dan mengaktifkan akun.
 4. Buka tab **API Key** untuk membuat key akses baru yang akan digunakan di aplikasi AI Agent Anda.
 
 ---
 
 ## 🌐 Endpoint API Utama
 
-Semua endpoint kompatibel dengan format standar OpenAI, Anthropic, dan Google Gemini:
+Semua endpoint kompatibel penuh dengan format standar industri:
 
 | Protocol | Method | Endpoint | Deskripsi | Auth |
 |---|---|---|---|---|
 | **OpenAI** | `POST` | `/v1/chat/completions` | Chat Completions (Stream & Non-Stream, Tool Calling) | `Bearer <KEY>` |
 | **OpenAI** | `GET` | `/v1/models` | Daftar semua model yang tersedia | `Bearer <KEY>` |
 | **OpenAI** | `GET` | `/v1/models/{model}` | Detail kapabilitas model spesifik | `Bearer <KEY>` |
-| **OpenAI** | `POST` | `/v1/images/generations` | Pembuatan Gambar AI (WanX 2.1) | `Bearer <KEY>` |
-| **OpenAI** | `POST` | `/v1/videos/generations` | Pembuatan Video AI (WanX 2.1) | `Bearer <KEY>` |
+| **OpenAI** | `POST` | `/v1/images/generations` | Pembuatan Gambar AI (Google Imagen 3) | `Bearer <KEY>` |
 | **Anthropic** | `POST` | `/v1/messages` | Format Pesan Anthropic Claude (`tool_use`) | `x-api-key` |
-| **Gemini** | `POST` | `/v1beta/models/{model}:generateContent` | Format Google Gemini API | `x-goog-api-key` |
-| **Media** | `GET` | `/api/media/proxy?url={url}` | Media Proxy Internal (Anti-403 Referer ACL) | Bebas |
+| **Gemini** | `POST` | `/v1beta/models/{model}:generateContent` | Format Google Gemini API resmi | `x-goog-api-key` |
 | **Sistem** | `GET` | `/healthz` & `/readyz` | Healthcheck gateway & pool akun | Bebas |
 
 ---
 
 ## 📋 Daftar Model yang Didukung
 
-Gateway ini menyediakan akses ke seluruh model resmi Gemini serta mendukung varian mode fitur dan alias kompatibilitas:
-
 ### 1. Model Dasar (Base Models)
 | Model ID | Deskripsi & Rekomendasi Penggunaan | Kapabilitas Utama |
 |---|---|---|
-| `gemini3.7-plus` | **Model Rekomendasi Utama** ⚡ — Sangat cepat, cerdas, ideal untuk coding agent (Cline, Roo, Claude Code). | Chat, Tool Use, Vision, Web Search |
-| `gemini3.8-max` | Model dengan kapasitas penalaran dan kedalaman logika tertinggi untuk instruksi kompleks. | Chat, Deep Reasoning, Tool Use |
-| `gemini3.7-max` | Model performa tinggi untuk penulisan, analisis data, dan tugas komprehensif. | Chat, Reasoning, Tool Use |
-| `gemini3.6-plus` | Model generasi 3.6 yang stabil, mendukung beragam fungsi multimedia dan tools. | Chat, Audio/Vision, Tool Use |
-| `gemini3.5-plus` | Model handal dan cepat untuk percakapan teks umum. | Chat, Tool Use |
-| `gemini3.5-omni-plus` | Model multimodal yang mendukung pemrosesan dokumen, audio, dan visual. | Multimodal Audio & Vision |
+| `gemini-2.5-flash` | **Model Rekomendasi Utama** ⚡ — Sangat cepat, kuota melimpah, ideal untuk coding agent (Cline, Roo, Claude Code). | Chat, Tool Use, Vision, Web Search |
+| `gemini-2.5-pro` | Model dengan kapasitas penalaran dan kedalaman logika tertinggi untuk instruksi kompleks. | Chat, Deep Reasoning, Tool Use |
+| `gemini-2.5-flash-thinking` | Mode penalaran mendalam (*deep thinking process*) sebelum memberikan jawaban akhir. | Chat, Thinking Process, Tool Use |
+| `gemini-2.0-flash` | Alias kompatibilitas versi 2.0 (diarahkan ke engine 2.5). | Chat, Tool Use |
+| `gemini-1.5-pro` | Alias kompatibilitas versi 1.5 Pro. | Chat, Tool Use |
 
-### 2. Akhiran Fitur / Suffix Modes
-Anda dapat menambahkan akhiran (*suffix*) ke Model ID dasar untuk memicu mode kapabilitas tertentu secara langsung:
-
-| Suffix | Contoh Model ID | Deskripsi Fitur |
-|---|---|---|
-| `-thinking` | `gemini3.7-plus-thinking` | Mengaktifkan penalaran mendalam (*deep thinking/reasoning token*) sebelum menjawab |
-| `-search` | `gemini3.7-plus-search` | Mengaktifkan pencarian web langsung (*real-time live web search*) |
-| `-deep-research` | `gemini3.7-plus-deep-research` | Mode riset komprehensif berbasis penelusuran multi-sumber web |
-| `-image` | `gemini3.7-plus-image` | Pembuatan gambar AI (*Text-to-Image* via WanX 2.1) |
-| `-video` | `gemini3.7-plus-video` | Pembuatan video AI (*Text-to-Video* via WanX 2.1) |
-| `-webdev` | `gemini3.7-plus-webdev` | Dioptimalkan khusus untuk pembuatan artefak kode web frontend/fullstack |
-| `-slides` | `gemini3.7-plus-slides` | Dioptimalkan khusus untuk pembuatan outline dan konten presentasi |
+### 2. Suffix Fitur (Suffix Modes)
+- `-thinking`: Mengaktifkan penalaran mendalam (*deep thinking*) (contoh: `gemini-2.5-pro-thinking`).
+- `-search`: Memaksa Google Search live diaktifkan pada jawaban.
 
 ### 3. Alias Kompatibilitas Otomatis (Model Aliases)
-Jika menggunakan aplikasi pihak ketiga yang mewajibkan penamaan model standar, gateway akan secara otomatis mengarahkan permintaan ke model Gemini yang setara:
-
-- **OpenAI Aliases**: `gpt-4o`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `o1`, `o3` ➔ otomatis dipetakan ke `gemini3.6-plus`
-- **OpenAI Mini Aliases**: `gpt-4o-mini`, `gpt-4.1-mini`, `gpt-3.5-turbo`, `o1-mini`, `o3-mini` ➔ otomatis dipetakan ke `gemini3.5-flash`
-- **Anthropic Aliases**: `claude-3.5-sonnet`, `claude-sonnet-4-5`, `claude-opus-4-6`, `claude-3-opus` ➔ otomatis dipetakan ke `gemini3.6-plus`; `claude-3-haiku` ➔ `gemini3.5-flash`
-- **Gemini Aliases**: `gemini-2.5-pro` ➔ `gemini3.6-plus`; `gemini-2.5-flash` ➔ `gemini3.5-flash`
-- **DeepSeek Aliases**: `deepseek-chat`, `deepseek-reasoner` ➔ `gemini3.6-plus`
-
-> [!TIP]
-> Untuk memeriksa daftar lengkap model yang aktif secara dinamis melalui API, panggil:
-> ```bash
-> curl -H "Authorization: Bearer <API_KEY>" http://127.0.0.1:7860/v1/models
-> ```
-
----
-
-## 🤖 Integrasi AI Agent & Tools
-
-### 1. Integrasi dengan Cline / Roo Code (VS Code Extension)
-- **API Provider**: `OpenAI Compatible`
-- **Base URL**: `http://127.0.0.1:7860/v1`
-- **API Key**: API Key dari menu **API Key** di WebUI (misal: `sk-...` atau `admin123456`)
-- **Model ID**: `gemini3.6-plus` atau `gemini3.7-plus`
-
-### 2. Integrasi dengan Claude Code (Anthropic CLI Agent)
-Gateway ini menyediakan endpoint Anthropic penuh (`/v1/messages` dan `/anthropic/v1/messages`) yang mendukung pemanggilan tool otomatis (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`).
-
-#### Opsi A: Ekspor Environment Variables
-```bash
-export ANTHROPIC_BASE_URL="http://127.0.0.1:7860"
-export ANTHROPIC_API_KEY="admin123456"       # atau API Key kustom Anda
-export ANTHROPIC_MODEL="gemini3.7-plus"       # rekomendasi: gemini3.7-plus atau gemini3.8-max
-export CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT="1"
-
-claude
-```
-
-#### Opsi B: Konfigurasi Permanen `~/.claude/settings.json`
-```json
-{
-  "theme": "dark",
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:7860",
-    "ANTHROPIC_API_KEY": "admin123456"
-  },
-  "model": "gemini3.7-plus"
-}
-```
-
-> [!TIP]
-> - **Jika Claude Code dijalankan di server/VPS yang sama dengan gateway:** Gunakan URL `http://127.0.0.1:7860`.
-> - **Jika Claude Code dijalankan di komputer/laptop lokal:** Ganti URL dengan IP server VPS Anda, misalnya `http://IP_VPS_ANDA:7860`.
-
-### 3. Contoh Penggunaan via Python (OpenAI SDK)
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:7860/v1",
-    api_key="admin123456"
-)
-
-# 1. Chat Biasa
-response = client.chat.completions.create(
-    model="gemini3.6-plus",
-    messages=[{"role": "user", "content": "Halo! Jelaskan komputasi kuantum secara singkat."}]
-)
-print(response.choices[0].message.content)
-
-# 2. Pemanggilan Tool (Function Calling)
-tools = [{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Cek cuaca terkini",
-        "parameters": {
-            "type": "object",
-            "properties": {"location": {"type": "string"}},
-            "required": ["location"]
-        }
-    }
-}]
-
-tool_response = client.chat.completions.create(
-    model="gemini3.6-plus",
-    messages=[{"role": "user", "content": "Berapa suhu di Jakarta sekarang?"}],
-    tools=tools
-)
-print("Tool Calls:", tool_response.choices[0].message.tool_calls)
-```
-
-### 4. Contoh cURL Chat Completions
-
-```bash
-curl -X POST http://127.0.0.1:7860/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer admin123456" \
-  -d '{
-    "model": "gemini3.6-plus",
-    "messages": [{"role": "user", "content": "Ceritakan lelucon lucu!"}],
-    "stream": false
-  }'
-```
-
----
-
-## ⚙️ Variabel Lingkungan (.env)
-
-| Variabel | Default | Deskripsi |
-|---|---|---|
-| `PORT` | `7860` | Port listen server gateway |
-| `ADMIN_KEY` | `admin123456` | Kunci master otorisasi WebUI & API |
-| `MAX_RETRIES` | `3` | Jumlah percobaan ulang saat kegagalan upstream |
-| `CHAT_ID_POOL_TARGET` | `5` | Jumlah sesi chat pra-hangat per akun |
-| `UPSTREAM_STREAM_IDLE_TIMEOUT_SECONDS` | `180` | Batas waktu idle streaming (detik) |
-
----
-
-## 🙏 Ucapan Terima Kasih & Sumber Referensi
-
-Proyek ini dibangun dan dikembangkan lebih lanjut berdasarkan riset serta fondasi luar biasa dari:
-
-- 🌟 **[YuJunZhiXue/gemini2API](https://github.com/YuJunZhiXue/gemini2API)** — Fondasi awal arsitektur Go backend gateway, adapter protokol multi-format (OpenAI, Anthropic, Gemini), dan sistem pool akun.
-- 📱 **[Gemini Android APK Wrapper (`gemini.mjs`)](https://www.kitsulabs.xyz/code/55ee58a5b60c)** oleh Shannz (KitsuLabs) — Referensi implementasi protokol resmi Android APK (`ai.geminilm.chat.android`), signature token WAF `app_waf`, serta alur login langsung kata sandi SHA-256 (`/api/v2/auths/signin`).
+- **OpenAI Aliases**: `gpt-4o`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `o1` ➔ diarahkan otomatis ke `gemini-2.5-pro`
+- **OpenAI Mini Aliases**: `gpt-4o-mini`, `gpt-3.5-turbo`, `o1-mini` ➔ diarahkan otomatis ke `gemini-2.5-flash`
+- **Anthropic Aliases**: `claude-3-5-sonnet`, `claude-3.5-sonnet`, `claude-sonnet-4-5` ➔ diarahkan otomatis ke `gemini-2.5-pro`; `claude-3-haiku` ➔ `gemini-2.5-flash`
 
 ---
 
 ## 📄 Lisensi
-Proyek ini didistribusikan di bawah lisensi **GNU General Public License v3.0 (GPL-3.0)**. Bebas digunakan, dipelajari, dan dikembangkan untuk kebutuhan personal maupun riset mandiri.
+Proyek ini didistribusikan di bawah lisensi **GNU General Public License v3.0 (GPL-3.0)**.
