@@ -1,0 +1,6 @@
+services:
+  gemini2api:
+    image: ${GEMINI2API_IMAGE:-gemini2api:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
