@@ -175,7 +175,7 @@ export default function LogsPage() {
           </div>
           <h2 className="mt-2 text-3xl md:text-4xl font-black tracking-tight">Log Aktivitas Permintaan</h2>
           <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
-            Pantau secara realtime permintaan yang masuk ke gateway, perutean akun Qwen, isi pesan prompt, respon model, dan eksekusi tool calling.
+            Pantau secara realtime permintaan yang masuk ke gateway, perutean akun Gemini, isi pesan prompt, respon model, dan eksekusi tool calling.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -576,7 +576,7 @@ export default function LogsPage() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between font-semibold">
                   <span className="flex items-center gap-1.5 text-foreground">
-                    <Cpu className="size-3.5 text-emerald-500" /> Respon Model Qwen
+                    <Cpu className="size-3.5 text-emerald-500"/> Respon Model Gemini
                   </span>
                   {selectedLog.response && (
                     <Button

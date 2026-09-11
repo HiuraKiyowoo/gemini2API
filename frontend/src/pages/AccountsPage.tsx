@@ -161,7 +161,7 @@ function statusNote(acc: AccountItem) {
 }
 
 function serviceOf(acc: AccountItem) {
-  return acc.service || acc.provider || "Qwen"
+  return acc.service || acc.provider || "Gemini"
 }
 
 function planOf(acc: AccountItem) {
@@ -471,7 +471,7 @@ export default function AccountsPage() {
     }
     const id = toast.loading(
       !token.trim() && email.trim() && password.trim()
-        ? "Melakukan login via API Android Qwen..."
+        ? "Memverifikasi cookie akun Google Gemini..."
         : "Menambahkan akun..."
     )
     fetch(`${API_BASE}/api/admin/accounts`, {
@@ -831,12 +831,12 @@ export default function AccountsPage() {
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-[30px] border border-white/75 bg-card/86 p-6 shadow-[var(--shadow-lift)]">
           <div className="mb-4">
-            <h3 className="text-xl font-black tracking-tight">Tambah Akun Qwen</h3>
+            <h3 className="text-xl font-black tracking-tight">Tambah Akun Google Gemini</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Pilih salah satu metode: <strong>Metode 1 (Rekomendasi)</strong>: Masukkan <strong>Email & Kata Sandi</strong> Qwen untuk login otomatis via protokol Android resmi (bebas blokir Captcha WAF). <strong>Metode 2</strong>: Tempel <strong>Token manual</strong> dari Local Storage browser jika Anda login via Google/OAuth.
+              Pilih salah satu metode: <strong>Metode 1 (Rekomendasi)</strong>: Tempel <strong>Cookie Google</strong> (string cookie berisi __Secure-1PSID, SAPISID atau JSON Cookie-Editor). <strong>Metode 2</strong>: Masukkan <strong>Email & Kata Sandi</strong> akun Google Gemini.
             </p>
             <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-              Tips: Jika akun didaftarkan dengan Email & Kata Sandi, cukup isi Email dan Sandi di bawah tanpa perlu menyalin Token dari browser.
+              Tips: Disarankan menyalin cookie Google (__Secure-1PSID dan SAPISID) dari gemini.google.com atau ekspor JSON array dari ekstensi Cookie-Editor.
             </p>
           </div>
           <div className="grid gap-3">
@@ -856,7 +856,7 @@ export default function AccountsPage() {
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Kata sandi akun Qwen"
+                  placeholder="Kata sandi akun Gemini"
                   className="w-full rounded-2xl border bg-background px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>

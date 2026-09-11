@@ -503,7 +503,7 @@ export default function SettingsPage() {
         <div className="admin-card min-w-0 overflow-hidden">
           <div className="admin-card-header flex flex-col space-y-1.5">
             <h3 className="font-semibold leading-none tracking-tight">Aturan Alias Model (Model Aliases)</h3>
-            <p className="text-sm text-muted-foreground">Nama model dari klien downstream akan otomatis dirutekan ke model target Qwen di bawah ini. Gunakan format JSON standar.</p>
+            <p className="text-sm text-muted-foreground">Nama model dari klien downstream akan otomatis dirutekan ke model target Gemini di bawah ini. Gunakan format JSON standar.</p>
           </div>
           <div className="p-6">
             <textarea
