@@ -137,20 +137,23 @@ Semua endpoint kompatibel penuh dengan format standar industri:
 ### 1. Model Dasar (Base Models)
 | Model ID | Deskripsi & Rekomendasi Penggunaan | Kapabilitas Utama |
 |---|---|---|
-| `gemini-2.5-flash` | **Model Rekomendasi Utama** ⚡ — Sangat cepat, kuota melimpah, ideal untuk coding agent (Cline, Roo, Claude Code). | Chat, Tool Use, Vision, Web Search |
-| `gemini-2.5-pro` | Model dengan kapasitas penalaran dan kedalaman logika tertinggi untuk instruksi kompleks. | Chat, Deep Reasoning, Tool Use |
-| `gemini-2.5-flash-thinking` | Mode penalaran mendalam (*deep thinking process*) sebelum memberikan jawaban akhir. | Chat, Thinking Process, Tool Use |
-| `gemini-2.0-flash` | Alias kompatibilitas versi 2.0 (diarahkan ke engine 2.5). | Chat, Tool Use |
-| `gemini-1.5-pro` | Alias kompatibilitas versi 1.5 Pro. | Chat, Tool Use |
+| `gemini-3.6-flash` | **Model Rekomendasi Utama** ⚡ — Generasi terbaru, sangat cepat, kuota melimpah, ideal untuk coding agent (Cline, Roo, Claude Code). | Chat, Tool Use, Vision, Web Search |
+| `gemini-3.5-flash` | Alias dari `gemini-3.6-flash` (nama lama yang masih valid di Gemini Web). | Chat, Tool Use, Vision, Web Search |
+| `gemini-3.5-flash-thinking` | Mode penalaran mendalam (*deep thinking process*) sebelum memberikan jawaban akhir (~20k karakter output). | Chat, Thinking Process, Tool Use |
+| `gemini-3.5-flash-thinking-lite` | Versi ringan dari mode thinking. | Chat, Thinking Process |
+| `gemini-3.1-pro` | Model dengan kapasitas penalaran dan kedalaman logika tertinggi untuk instruksi kompleks (membutuhkan cookie akun valid). | Chat, Deep Reasoning, Tool Use |
+| `gemini-flash-lite` | Varian Flash yang cepat dan ringan (~10k karakter output). | Chat, Tool Use |
+| `gemini-auto` | Router otomatis Gemini Web (diarahkan ke `gemini-3.6-flash`). | Chat, Tool Use |
 
 ### 2. Suffix Fitur (Suffix Modes)
-- `-thinking`: Mengaktifkan penalaran mendalam (*deep thinking*) (contoh: `gemini-2.5-pro-thinking`).
+- `-thinking`: Mengaktifkan penalaran mendalam (*deep thinking*) (contoh: `gemini-3.5-flash-thinking`).
 - `-search`: Memaksa Google Search live diaktifkan pada jawaban.
 
 ### 3. Alias Kompatibilitas Otomatis (Model Aliases)
-- **OpenAI Aliases**: `gpt-4o`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `o1` ➔ diarahkan otomatis ke `gemini-2.5-pro`
-- **OpenAI Mini Aliases**: `gpt-4o-mini`, `gpt-3.5-turbo`, `o1-mini` ➔ diarahkan otomatis ke `gemini-2.5-flash`
-- **Anthropic Aliases**: `claude-3-5-sonnet`, `claude-3.5-sonnet`, `claude-sonnet-4-5` ➔ diarahkan otomatis ke `gemini-2.5-pro`; `claude-3-haiku` ➔ `gemini-2.5-flash`
+- **Legacy Gemini Aliases**: `gemini-2.5-flash` ➔ `gemini-3.6-flash`; `gemini-2.5-pro`, `gemini-pro`, `gemini-1.5-pro` ➔ `gemini-3.1-pro`; `gemini-2.5-flash-thinking`, `gemini-thinking` ➔ `gemini-3.5-flash-thinking`; `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-flash` ➔ `gemini-3.6-flash`
+- **OpenAI Aliases**: `gpt-4o`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `o1` ➔ diarahkan otomatis ke `gemini-3.1-pro`
+- **OpenAI Mini Aliases**: `gpt-4o-mini`, `gpt-3.5-turbo`, `o1-mini` ➔ diarahkan otomatis ke `gemini-3.6-flash`
+- **Anthropic Aliases**: `claude-3-5-sonnet`, `claude-3.5-sonnet`, `claude-sonnet-4-5` ➔ diarahkan otomatis ke `gemini-3.1-pro`; `claude-3-haiku` ➔ `gemini-3.6-flash`
 
 ---
 

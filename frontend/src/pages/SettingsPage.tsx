@@ -179,7 +179,7 @@ export default function SettingsPage() {
     -H "Content-Type: application/json" \\
     -H "Authorization: Bearer YOUR_API_KEY" \\
     -d '{
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.6-flash",
       "messages": [{"role": "user", "content": "Hello"}],
       "stream": true
     }'
@@ -196,7 +196,7 @@ export default function SettingsPage() {
     }'
 
   # Gemini
-  curl ${baseUrl}/v1beta/models/gemini-2.5-flash:generateContent \\
+  curl ${baseUrl}/v1beta/models/gemini-3.6-flash:generateContent \\
     -H "Content-Type: application/json" \\
     -H "Authorization: Bearer YOUR_API_KEY" \\
     -d '{

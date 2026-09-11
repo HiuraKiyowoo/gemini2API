@@ -1490,7 +1490,7 @@ func NewChatIDPool(client *QwenClient, accounts *AccountPool, settings Settings,
 		items:    map[string][]WarmChat{},
 		desired:  map[string]ModelWarmKey{},
 	}
-	pool.RememberModel("gemini-2.5-flash", "t2t")
+	pool.RememberModel("gemini-3.6-flash", "t2t")
 	return pool
 }
 
@@ -1564,7 +1564,7 @@ func (p *ChatIDPool) RememberModel(model, chatType string) {
 	}
 	model = strings.TrimSpace(model)
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = "gemini-3.6-flash"
 	}
 	chatType = normalizeUpstreamChatType(chatType)
 	key := model + "|" + chatType
@@ -1887,22 +1887,31 @@ func LoadSettings() Settings {
 }
 
 var modelMap = map[string]string{
-	"gemini-2.5-flash":          "gemini-2.5-flash",
-	"gemini-2.5-pro":            "gemini-2.5-pro",
-	"gemini-2.5-flash-thinking": "gemini-2.5-flash-thinking",
-	"gemini-2.0-flash":          "gemini-2.5-flash",
-	"gemini-1.5-flash":          "gemini-2.5-flash",
-	"gemini-1.5-pro":            "gemini-2.5-pro",
-	"gemini-pro":                "gemini-2.5-pro",
-	"gemini-flash":              "gemini-2.5-flash",
-	"gpt-4o":                    "gemini-2.5-pro",
-	"gpt-4o-mini":               "gemini-2.5-flash",
-	"gpt-4":                     "gemini-2.5-pro",
-	"gpt-3.5-turbo":             "gemini-2.5-flash",
-	"claude-3-5-sonnet":         "gemini-2.5-pro",
-	"claude-3.5-sonnet":         "gemini-2.5-pro",
-	"claude-3-sonnet":           "gemini-2.5-pro",
-	"claude-3-haiku":            "gemini-2.5-flash",
+	// Primary Gemini Web lineup (upstream protocol: Sophomoresty/gemini-web2api)
+	"gemini-3.6-flash":               "gemini-3.6-flash",
+	"gemini-3.5-flash":               "gemini-3.6-flash",
+	"gemini-3.5-flash-thinking":      "gemini-3.5-flash-thinking",
+	"gemini-3.5-flash-thinking-lite": "gemini-3.5-flash-thinking-lite",
+	"gemini-3.1-pro":                 "gemini-3.1-pro",
+	"gemini-flash-lite":              "gemini-flash-lite",
+	"gemini-auto":                    "gemini-3.6-flash",
+	// Backward-compat aliases -> current generation
+	"gemini-2.5-flash":          "gemini-3.6-flash",
+	"gemini-2.5-pro":            "gemini-3.1-pro",
+	"gemini-2.5-flash-thinking": "gemini-3.5-flash-thinking",
+	"gemini-2.0-flash":          "gemini-3.6-flash",
+	"gemini-1.5-flash":          "gemini-3.6-flash",
+	"gemini-1.5-pro":            "gemini-3.1-pro",
+	"gemini-pro":                "gemini-3.1-pro",
+	"gemini-flash":              "gemini-3.6-flash",
+	"gpt-4o":                    "gemini-3.1-pro",
+	"gpt-4o-mini":               "gemini-3.6-flash",
+	"gpt-4":                     "gemini-3.1-pro",
+	"gpt-3.5-turbo":             "gemini-3.6-flash",
+	"claude-3-5-sonnet":         "gemini-3.1-pro",
+	"claude-3.5-sonnet":         "gemini-3.1-pro",
+	"claude-3-sonnet":           "gemini-3.1-pro",
+	"claude-3-haiku":            "gemini-3.6-flash",
 }
 
 func resolveModel(name string) string {
@@ -7968,7 +7977,6 @@ const (
 	defaultAndroidAppWaf = ""
 )
 
-
 type geminiSessionCache struct {
 	atToken   string
 	bl        string
@@ -8219,7 +8227,6 @@ func (c *QwenClient) fetchAtAndBl(ctx context.Context, cookieHeader, sapisid str
 	return atToken, bl, nil
 }
 
-
 func (c *QwenClient) requestJSON(ctx context.Context, method, path, token string, body any, timeout time.Duration) (int, string, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -8298,7 +8305,7 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 	}
 
 	prompt := extractPromptFromPayload(payload)
-	model := extractModelFromPayload(payload, "gemini-2.5-flash")
+	model := extractModelFromPayload(payload, "gemini-3.6-flash")
 	isThinking := extractThinkingFromPayload(payload) || strings.Contains(model, "thinking")
 
 	inner := make([]any, 80)
@@ -8310,11 +8317,11 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 	inner[10] = 1
 	inner[11] = 0
 
-	modelCode := 1 // 1: gemini-flash, 2: gemini-thinking, 3: gemini-pro
+	modelCode := 1 // 1: flash, 2: thinking, 3: pro (lite variants use flash code)
 	switch strings.ToLower(model) {
-	case "gemini-2.5-pro", "gemini-pro", "gpt-4o", "claude-3-5-sonnet", "claude-3.5-sonnet":
+	case "gemini-3.1-pro", "gemini-2.5-pro", "gemini-pro", "gpt-4o", "claude-3-5-sonnet", "claude-3.5-sonnet":
 		modelCode = 3
-	case "gemini-2.5-flash-thinking", "gemini-thinking":
+	case "gemini-3.5-flash-thinking", "gemini-2.5-flash-thinking", "gemini-thinking":
 		modelCode = 2
 		isThinking = true
 	default:
@@ -8507,11 +8514,14 @@ func (c *QwenClient) ListChats(ctx context.Context, token string, limit int) ([]
 
 func (c *QwenClient) ListModelsFromPool(ctx context.Context) ([]map[string]any, error) {
 	return []map[string]any{
-		{"id": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "description": "Google Gemini 2.5 Flash - Fast, Multimodal"},
-		{"id": "gemini-2.5-pro", "display_name": "Gemini 2.5 Pro", "description": "Google Gemini 2.5 Pro - Advanced Reasoning"},
-		{"id": "gemini-2.5-flash-thinking", "display_name": "Gemini 2.5 Flash Thinking", "description": "Google Gemini 2.5 Flash Thinking Mode"},
-		{"id": "gpt-4o", "display_name": "GPT-4o (Gemini Pro Alias)", "description": "OpenAI GPT-4o mapped to Gemini 2.5 Pro"},
-		{"id": "claude-3-5-sonnet", "display_name": "Claude 3.5 Sonnet (Gemini Pro Alias)", "description": "Claude 3.5 Sonnet mapped to Gemini 2.5 Pro"},
+		{"id": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash", "description": "Google Gemini 3.6 Flash - Fast, Multimodal (latest)"},
+		{"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash (Alias)", "description": "Alias of Gemini 3.6 Flash"},
+		{"id": "gemini-3.5-flash-thinking", "display_name": "Gemini 3.5 Flash Thinking", "description": "Google Gemini 3.5 Flash Thinking Mode"},
+		{"id": "gemini-3.5-flash-thinking-lite", "display_name": "Gemini 3.5 Flash Thinking Lite", "description": "Lightweight Thinking Mode"},
+		{"id": "gemini-3.1-pro", "display_name": "Gemini 3.1 Pro", "description": "Google Gemini 3.1 Pro - Advanced Reasoning (requires cookie)"},
+		{"id": "gemini-flash-lite", "display_name": "Gemini Flash Lite", "description": "Fast, lightweight Flash variant"},
+		{"id": "gpt-4o", "display_name": "GPT-4o (Gemini Pro Alias)", "description": "OpenAI GPT-4o mapped to Gemini 3.1 Pro"},
+		{"id": "claude-3-5-sonnet", "display_name": "Claude 3.5 Sonnet (Gemini Pro Alias)", "description": "Claude 3.5 Sonnet mapped to Gemini 3.1 Pro"},
 	}, nil
 }
 

@@ -27,19 +27,22 @@ export type ModelGroup = {
 }
 
 export const FALLBACK_CHAT_MODELS: ModelOption[] = [
-  { id: "gemini-2.5-flash", base_model: "gemini-2.5-flash", family: "gemini-2.5", mode: "chat", display_name: "gemini-2.5-flash", capabilities: {} },
-  { id: "gemini-2.5-pro", base_model: "gemini-2.5-pro", family: "gemini-2.5", mode: "chat", display_name: "gemini-2.5-pro", capabilities: {} },
-  { id: "gemini-2.5-flash-thinking", base_model: "gemini-2.5-flash-thinking", family: "gemini-2.5", mode: "thinking", display_name: "gemini-2.5-flash-thinking", capabilities: { thinking: true } },
-  { id: "gpt-4o", base_model: "gpt-4o", family: "gemini-2.5", mode: "chat", display_name: "gpt-4o (Gemini Pro)", capabilities: {} },
-  { id: "claude-3-5-sonnet", base_model: "claude-3-5-sonnet", family: "gemini-2.5", mode: "chat", display_name: "claude-3-5-sonnet (Gemini Pro)", capabilities: {} },
+  { id: "gemini-3.6-flash", base_model: "gemini-3.6-flash", family: "gemini-3.6", mode: "chat", display_name: "gemini-3.6-flash", capabilities: {} },
+  { id: "gemini-3.5-flash", base_model: "gemini-3.6-flash", family: "gemini-3.5", mode: "chat", display_name: "gemini-3.5-flash (Alias)", capabilities: {} },
+  { id: "gemini-3.5-flash-thinking", base_model: "gemini-3.5-flash-thinking", family: "gemini-3.5", mode: "thinking", display_name: "gemini-3.5-flash-thinking", capabilities: { thinking: true } },
+  { id: "gemini-3.5-flash-thinking-lite", base_model: "gemini-3.5-flash-thinking-lite", family: "gemini-3.5", mode: "thinking", display_name: "gemini-3.5-flash-thinking-lite", capabilities: { thinking: true } },
+  { id: "gemini-3.1-pro", base_model: "gemini-3.1-pro", family: "gemini-3.1", mode: "chat", display_name: "gemini-3.1-pro", capabilities: {} },
+  { id: "gemini-flash-lite", base_model: "gemini-flash-lite", family: "gemini", mode: "chat", display_name: "gemini-flash-lite", capabilities: {} },
+  { id: "gpt-4o", base_model: "gpt-4o", family: "gemini-3.1", mode: "chat", display_name: "gpt-4o (Gemini Pro)", capabilities: {} },
+  { id: "claude-3-5-sonnet", base_model: "claude-3-5-sonnet", family: "gemini-3.1", mode: "chat", display_name: "claude-3-5-sonnet (Gemini Pro)", capabilities: {} },
 ]
 
 export const FALLBACK_IMAGE_MODELS: ModelOption[] = [
-  { id: "gemini-2.5-flash-image", base_model: "gemini-2.5-flash", family: "gemini-2.5", mode: "image", display_name: "gemini-2.5-flash image", capabilities: { image_gen: true } },
+  { id: "gemini-2.5-flash-image", base_model: "gemini-3.6-flash", family: "gemini-2.5", mode: "image", display_name: "gemini-2.5-flash image", capabilities: { image_gen: true } },
 ]
 
 export const FALLBACK_VIDEO_MODELS: ModelOption[] = [
-  { id: "gemini-2.5-flash-video", base_model: "gemini-2.5-flash", family: "gemini-2.5", mode: "video", display_name: "gemini-2.5-flash video", capabilities: { video_gen: true } },
+  { id: "gemini-2.5-flash-video", base_model: "gemini-3.6-flash", family: "gemini-2.5", mode: "video", display_name: "gemini-2.5-flash video", capabilities: { video_gen: true } },
 ]
 
 export const CAPABILITY_LABELS: Array<{ key: keyof ModelCapability; label: string }> = [
@@ -195,7 +198,7 @@ export function chooseDefaultModel(options: ModelOption[], currentModel?: string
   if (currentModel && options.some(option => option.id === currentModel)) return currentModel
   if (preferredId && options.some(option => option.id === preferredId)) return preferredId
   const base = options.find(isBaseModelOption)
-  return base?.id || options[0]?.id || preferredId || "gemini-2.5-flash"
+  return base?.id || options[0]?.id || preferredId || "gemini-3.6-flash"
 }
 
 export function groupModelOptions(options: ModelOption[]): ModelGroup[] {
