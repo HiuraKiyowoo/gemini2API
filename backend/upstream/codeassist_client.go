@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -200,6 +201,15 @@ func NewCodeAssistClient(opts CodeAssistOptions) (*CodeAssistClient, error) {
 // Options exposes the resolved configuration (read-only copy).
 func (c *CodeAssistClient) Options() CodeAssistOptions { return c.opts }
 
+// RegisterRefreshToken tells the transport where an account's refresh token
+// lives, so a token rotated by Google is written back to that file.
+func (c *CodeAssistClient) RegisterRefreshToken(refreshToken, file string) {
+	c.oauth.RegisterRefreshToken(refreshToken, file)
+}
+
+// RotationError reports the last refresh-token write-back failure, if any.
+func (c *CodeAssistClient) RotationError() string { return c.oauth.RotationError() }
+
 func newCodeAssistHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -226,6 +236,13 @@ type OAuthToken struct {
 
 // OAuthRefresher turns refresh tokens into cached access tokens. The cache is
 // keyed by refresh token so a pool of OAuth accounts never thrashes one slot.
+//
+// Concurrency contract:
+//   - AccessTokenFor single-flights per refresh token: N goroutines asking for
+//     the same expired token trigger exactly ONE token-endpoint call.
+//   - When Google rotates the refresh_token, the new value is persisted back to
+//     the credential file (atomically) and the in-memory cache key migrates, so
+//     the rotated value is not lost on the next process start.
 type OAuthRefresher struct {
 	mu             sync.Mutex
 	tokenURL       string
@@ -234,6 +251,29 @@ type OAuthRefresher struct {
 	defaultRefresh string
 	cache          map[string]OAuthToken
 	client         *http.Client
+
+	// fileFor maps a refresh token to the credential file it was loaded from,
+	// so a rotated refresh_token can be written back to the right place.
+	fileFor map[string]string
+
+	// inflight holds the per-token refresh currently in progress; a second
+	// caller for the same key waits on it instead of hitting the network.
+	inflight map[string]*refreshCall
+
+	// writeBack is overridable for tests.
+	writeBack func(path, refreshToken string) error
+
+	// rotationError records the last refresh-token write-back failure so it can
+	// be surfaced in diagnostics without failing the live request.
+	rotationError string
+}
+
+// refreshCall is one in-progress refresh shared by all waiters for a key.
+type refreshCall struct {
+	done      chan struct{}
+	token     string
+	expiresAt time.Time
+	err       error
 }
 
 // NewOAuthRefresher loads a refresh token from a JSON file written by the
@@ -244,7 +284,12 @@ func NewOAuthRefresher(tokenURL, clientID, secret, refreshTokenFile string) (*OA
 		clientID: firstNonEmpty(clientID, DefaultCodeAssistClientID),
 		secret:   firstNonEmpty(secret, DefaultCodeAssistClientSecret),
 		cache:    map[string]OAuthToken{},
+		fileFor:  map[string]string{},
+		inflight: map[string]*refreshCall{},
 		client:   &http.Client{Timeout: 45 * time.Second},
+		writeBack: func(path, refreshToken string) error {
+			return PersistRefreshTokenFile(path, refreshToken)
+		},
 	}
 	if strings.TrimSpace(refreshTokenFile) == "" {
 		return r, nil
@@ -254,7 +299,72 @@ func NewOAuthRefresher(tokenURL, clientID, secret, refreshTokenFile string) (*OA
 		return nil, err
 	}
 	r.defaultRefresh = refresh
+	r.fileFor[refresh] = refreshTokenFile
 	return r, nil
+}
+
+// RegisterRefreshToken records where a refresh token came from, so a rotation
+// reported by Google can be written back to that file. Called for per-account
+// tokens supplied by the router (whose files it owns).
+func (r *OAuthRefresher) RegisterRefreshToken(refreshToken, filePath string) {
+	refreshToken = strings.TrimSpace(refreshToken)
+	filePath = strings.TrimSpace(filePath)
+	if refreshToken == "" || filePath == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fileFor[refreshToken] = filePath
+}
+
+// PersistRefreshTokenFile atomically rewrites only the refresh_token field of
+// an OAuth credential file, preserving every other field (access_token,
+// id_token, expiry, scope, ...). It writes to a temp file in the same directory
+// and renames, so a concurrent reader never observes a half-written file.
+func PersistRefreshTokenFile(path, refreshToken string) error {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if path == "" || refreshToken == "" {
+		return errors.New("persist oauth file: empty path or refresh_token")
+	}
+	// Preserve the original key order and unknown fields by decoding into a
+	// map and re-encoding; json.Marshal sorts keys, which is acceptable.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	payload["refresh_token"] = refreshToken
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".oauth-rotate-*")
+	if err != nil {
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(encoded); err != nil {
+		tmp.Close()
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	// Match the original file's restrictive mode rather than the umask default.
+	_ = os.Chmod(tmpName, 0o600)
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("persist oauth file %s: %w", path, err)
+	}
+	return nil
 }
 
 // LoadRefreshTokenFile reads the refresh_token out of an OAuth JSON file.
@@ -299,36 +409,117 @@ func (r *OAuthRefresher) AccessToken(ctx context.Context) (string, error) {
 
 // AccessTokenFor returns a valid access token for refreshToken ("" = default),
 // refreshing proactively when within codeAssistTokenSkew of expiry.
+//
+// Concurrent callers for the same refresh token are coalesced: exactly one
+// token-endpoint round trip happens, and every waiter receives its result.
 func (r *OAuthRefresher) AccessTokenFor(ctx context.Context, refreshToken string) (string, error) {
-	r.mu.Lock()
-	key := strings.TrimSpace(refreshToken)
-	if key == "" {
-		key = r.defaultRefresh
-	}
-	if key == "" {
+	// Single-flight: if a refresh for this key is already running, wait for it
+	// instead of starting a second one. The leader populates the cache before
+	// closing `done`, so a waiter can simply take another turn at the top.
+	const maxWaitTurns = 3
+	for turn := 0; turn < maxWaitTurns; turn++ {
+		r.mu.Lock()
+		key := strings.TrimSpace(refreshToken)
+		if key == "" {
+			key = r.defaultRefresh
+		}
+		if key == "" {
+			r.mu.Unlock()
+			return "", errors.New("code assist: no OAuth refresh_token configured")
+		}
+		if cached, ok := r.cache[key]; ok && cached.AccessToken != "" && time.Until(cached.ExpiresAt) > codeAssistTokenSkew {
+			token := cached.AccessToken
+			r.mu.Unlock()
+			return token, nil
+		}
+		if call, ok := r.inflight[key]; ok {
+			r.mu.Unlock()
+			select {
+			case <-call.done:
+				if call.err != nil {
+					return "", call.err
+				}
+				// The leader already paid for this refresh. Take its token as
+				// long as it is genuinely usable: re-applying the full skew
+				// margin here would make every waiter re-elect as a new leader
+				// and storm the token endpoint whenever the TTL is shorter than
+				// the skew. The skew still drives the *next* proactive refresh.
+				if call.token != "" && time.Until(call.expiresAt) > 0 {
+					return call.token, nil
+				}
+				continue // expired in flight; try again as leader
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		// Elect this goroutine as the refresher for the key.
+		call := &refreshCall{done: make(chan struct{})}
+		r.inflight[key] = call
 		r.mu.Unlock()
-		return "", errors.New("code assist: no OAuth refresh_token configured")
-	}
-	if cached, ok := r.cache[key]; ok && cached.AccessToken != "" && time.Until(cached.ExpiresAt) > codeAssistTokenSkew {
-		token := cached.AccessToken
+
+		token, expiresAt, rotated, err := r.fetch(ctx, key)
+
+		r.mu.Lock()
+		delete(r.inflight, key)
+		if err == nil {
+			r.cache[key] = OAuthToken{AccessToken: token, ExpiresAt: expiresAt}
+			// Google rotated the refresh token: migrate the cache key and
+			// remember the new value so the next process start does not use a
+			// token Google has already retired.
+			if rotated != "" && rotated != key {
+				r.adoptRotatedRefresh(key, rotated)
+			}
+		}
+		call.token, call.expiresAt, call.err = token, expiresAt, err
+		close(call.done)
 		r.mu.Unlock()
+
+		if err != nil {
+			return "", err
+		}
 		return token, nil
 	}
-	r.mu.Unlock()
-
-	// Deliberately not holding the mutex across the network call: a slow
-	// refresh for one account must not block the others.
-	token, expiresAt, err := r.fetch(ctx, key)
-	if err != nil {
-		return "", err
-	}
-	r.mu.Lock()
-	r.cache[key] = OAuthToken{AccessToken: token, ExpiresAt: expiresAt}
-	r.mu.Unlock()
-	return token, nil
+	return "", errors.New("code assist: token refresh did not settle within the expected window")
 }
 
-func (r *OAuthRefresher) fetch(ctx context.Context, refreshToken string) (string, time.Time, error) {
+// adoptRotatedRefresh migrates every in-memory mapping off a spent refresh
+// token onto the rotated one and persists it back to its credential file.
+// Callers must hold r.mu.
+func (r *OAuthRefresher) adoptRotatedRefresh(spent, rotated string) {
+	if previous, ok := r.cache[spent]; ok {
+		delete(r.cache, spent)
+		r.cache[rotated] = previous
+	}
+	if r.defaultRefresh == spent {
+		r.defaultRefresh = rotated
+	}
+	file, ok := r.fileFor[spent]
+	if !ok || file == "" {
+		delete(r.fileFor, spent)
+		return
+	}
+	delete(r.fileFor, spent)
+	r.fileFor[rotated] = file
+	if r.writeBack == nil {
+		return
+	}
+	// A write-back failure must not fail the live request: the rotated refresh
+	// token is already in use in memory. Record it so /admin can surface it.
+	if err := r.writeBack(file, rotated); err != nil {
+		r.rotationError = filepath.Base(file) + ": " + redactCredentialMaterial(err.Error(), rotated)
+	} else {
+		r.rotationError = ""
+	}
+}
+
+// RotationError reports the last refresh-token write-back failure, if any.
+func (r *OAuthRefresher) RotationError() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rotationError
+}
+
+func (r *OAuthRefresher) fetch(ctx context.Context, refreshToken string) (string, time.Time, string, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
@@ -337,44 +528,79 @@ func (r *OAuthRefresher) fetch(ctx context.Context, refreshToken string) (string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("code assist oauth refresh failed: %w", err)
+		return "", time.Time{}, "", fmt.Errorf("code assist oauth refresh failed: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", time.Time{}, fmt.Errorf("code assist oauth refresh HTTP %d: %s", resp.StatusCode, truncateOneLine(string(body), 300))
+		// The token endpoint echoes the submitted refresh_token back in some
+		// error payloads; scrub it before the message can reach a log line.
+		return "", time.Time{}, "", fmt.Errorf("code assist oauth refresh HTTP %d: %s",
+			resp.StatusCode, redactCredentialMaterial(truncateOneLine(string(body), 300), refreshToken))
 	}
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
+		AccessToken  string `json:"access_token"`
+		ExpiresIn    int64  `json:"expires_in"`
+		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", time.Time{}, fmt.Errorf("decode oauth response: %w", err)
+		return "", time.Time{}, "", fmt.Errorf("decode oauth response: %w", err)
 	}
 	access := strings.TrimSpace(tokenResp.AccessToken)
 	if access == "" {
-		return "", time.Time{}, errors.New("code assist oauth refresh returned an empty access_token")
+		return "", time.Time{}, "", errors.New("code assist oauth refresh returned an empty access_token")
 	}
 	ttl := time.Duration(tokenResp.ExpiresIn) * time.Second
 	if ttl <= 0 {
 		ttl = 3500 * time.Second
 	}
-	return access, time.Now().Add(ttl), nil
+	return access, time.Now().Add(ttl), strings.TrimSpace(tokenResp.RefreshToken), nil
 }
 
-// Invalidate drops every cached access token (used after 401/403).
+// Invalidate drops every cached access token. Prefer InvalidateFor: clearing
+// the whole table turns one bad account into a refresh storm for all of them.
 func (r *OAuthRefresher) Invalidate() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cache = map[string]OAuthToken{}
+}
+
+// InvalidateFor drops the cached access token for one refresh token (or the
+// default one when empty), forcing the next AccessTokenFor to re-mint it.
+func (r *OAuthRefresher) InvalidateFor(refreshToken string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := strings.TrimSpace(refreshToken)
+	if key == "" {
+		key = r.defaultRefresh
+	}
+	if key == "" {
+		r.cache = map[string]OAuthToken{}
+		return
+	}
+	delete(r.cache, key)
+}
+
+// DropRefreshToken forgets a cached refresh token and its access token. Used
+// when the credential file on disk changed (rotation by another process) so a
+// stale value is not served forever.
+func (r *OAuthRefresher) DropRefreshToken(refreshToken string) {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cache, refreshToken)
+	delete(r.fileFor, refreshToken)
 }
 
 // ---- per-model cooldown ----
@@ -495,6 +721,7 @@ func (c *CodeAssistClient) StreamChat(ctx context.Context, token, chatID string,
 func (c *CodeAssistClient) streamWithRetries(ctx context.Context, refresh string, body map[string]any, model string, deadline time.Time, onEvent func(Event) error) (int, int, error) {
 	var lastErr error
 	var lastStatus int
+	reauthTried := false
 	for attempt := 1; attempt <= c.opts.Attempts; attempt++ {
 		if attempt > 1 {
 			remaining := time.Until(deadline)
@@ -524,6 +751,20 @@ func (c *CodeAssistClient) streamWithRetries(ctx context.Context, refresh string
 			c.cooldown.park(model, park, err.Error())
 			// The quota window is longer than our retry delay: do not burn
 			// attempts against the same wall.
+			break
+		}
+		if lastStatus == http.StatusUnauthorized || lastStatus == http.StatusForbidden {
+			// A cached access token can go stale early (Google revoked it, the
+			// clock skew heuristic missed, or the credential rotated). Drop only
+			// this account's cached token and retry once with a fresh one before
+			// declaring the credential dead. 401/403 must stay distinct from 429:
+			// no model cooldown parking here.
+			if !reauthTried {
+				reauthTried = true
+				c.oauth.InvalidateFor(refresh)
+				attempt-- // the re-auth retry does not consume a throttle attempt
+				continue
+			}
 			break
 		}
 		if lastStatus == http.StatusNotFound || lastStatus == http.StatusBadRequest {
@@ -578,7 +819,9 @@ func (c *CodeAssistClient) streamOnce(ctx context.Context, refresh string, body 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			c.oauth.Invalidate()
+			// Scope the invalidation to this account's credential so one bad
+			// account cannot force every other account to re-refresh.
+			c.oauth.InvalidateFor(refresh)
 		}
 		return 0, resp.StatusCode, codeAssistHTTPError(resp.StatusCode, errBody)
 	}
@@ -1155,6 +1398,7 @@ func ExtractCodeAssistText(raw []byte) (string, error) {
 
 // ---- errors ----
 
+// codeAssistError is the typed status carrier returned by the transport.
 type codeAssistError struct {
 	Status  int
 	Message string
@@ -1164,12 +1408,26 @@ func (e *codeAssistError) Error() string {
 	return fmt.Sprintf("code assist HTTP %d: %s", e.Status, e.Message)
 }
 
+// StatusCode reports the upstream HTTP status, satisfying the interface that
+// StatusCodeOf looks for. It survives fmt.Errorf("%w") re-wrapping, unlike a
+// message-text scan.
+func (e *codeAssistError) StatusCode() int { return e.Status }
+
+// statusCoder is the shape StatusCodeOf probes for with errors.As.
+type statusCoder interface{ StatusCode() int }
+
 // StatusCodeOf reports the upstream HTTP status carried by an error, or 0.
-// It also understands errors that only mention the status in their message,
-// because the router re-wraps transport errors before returning them.
+// It prefers the typed carrier (robust across re-wrapping) and only falls back
+// to scanning the message, because the router re-wraps transport errors.
 func StatusCodeOf(err error) int {
+	var coder statusCoder
+	if errors.As(err, &coder) {
+		if code := coder.StatusCode(); code != 0 {
+			return code
+		}
+	}
 	var caErr *codeAssistError
-	if errors.As(err, &caErr) {
+	if errors.As(err, &caErr) && caErr.Status != 0 {
 		return caErr.Status
 	}
 	if err == nil {
@@ -1220,7 +1478,9 @@ func codeAssistHTTPError(status int, body []byte) error {
 	if json.Unmarshal(body, &parsed) == nil && parsed.Error.Message != "" {
 		message = firstNonEmpty(parsed.Error.Status, "error") + " " + parsed.Error.Message
 	}
-	return &codeAssistError{Status: status, Message: truncateOneLine(message, 400)}
+	// Upstream error bodies can echo request context; scrub token material
+	// before the message can be logged by the router.
+	return &codeAssistError{Status: status, Message: redactCredentialMaterial(truncateOneLine(message, 400), "")}
 }
 
 func isRateLimitStatus(err error) bool {
@@ -1261,6 +1521,39 @@ func RetryAfterSeconds(message string) int {
 	}
 	return 0
 }
+
+// ---- credential redaction ----
+
+// credentialShaped matches Google OAuth token material that must never be
+// written to a log line: access tokens (ya29.*), refresh tokens (1//*),
+// id_tokens (JWT with 3 dot-separated segments) and Bearer headers.
+var credentialShaped = []*regexp.Regexp{
+	regexp.MustCompile(`ya29\.[A-Za-z0-9._\-]{8,}`),
+	regexp.MustCompile(`1//[A-Za-z0-9._\-]{8,}`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}`),
+	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._\-]{16,}`),
+	regexp.MustCompile(`(?i)"?(access|refresh|id)_token"?\s*[:=]\s*"?[^"\s,}]+`),
+}
+
+// redactCredentialMaterial scrubs token-shaped substrings from anything that
+// could be logged. extra is a known secret (e.g. the submitted refresh token)
+// that is replaced verbatim even if it does not match the generic patterns.
+func redactCredentialMaterial(text, extra string) string {
+	if text == "" {
+		return text
+	}
+	if extra != "" && len(extra) >= 8 && strings.Contains(text, extra) {
+		text = strings.ReplaceAll(text, extra, "***REDACTED***")
+	}
+	for _, re := range credentialShaped {
+		text = re.ReplaceAllString(text, "***REDACTED***")
+	}
+	return text
+}
+
+// RedactCredentialMaterial is the exported form used by callers outside this
+// package that build log messages from upstream bodies.
+func RedactCredentialMaterial(text string) string { return redactCredentialMaterial(text, "") }
 
 // ---- small helpers ----
 

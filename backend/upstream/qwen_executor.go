@@ -90,3 +90,14 @@ func ExtractUpstreamError(text string) string {
 	}
 	return ""
 }
+
+// Verifier is implemented by transports that can answer "is this account
+// usable?" with a human-readable diagnosis (and, when blocked, the reason).
+type Verifier interface {
+	Verify(ctx context.Context, token string) (bool, string)
+}
+
+var (
+	_ Verifier = (*CodeAssistClient)(nil)
+	_ Verifier = (*AntigravityClient)(nil)
+)

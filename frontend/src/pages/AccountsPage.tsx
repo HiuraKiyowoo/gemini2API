@@ -5,8 +5,10 @@ import {
   CheckCircle2,
   Copy,
   Download,
+  ExternalLink,
   FileUp,
   FolderArchive,
+  Key,
   Pencil,
   Plus,
   RefreshCw,
@@ -15,6 +17,7 @@ import {
   ShieldAlert,
   Trash2,
   UserRound,
+  X,
   XCircle,
   Zap,
 } from "lucide-react"
@@ -28,6 +31,8 @@ type AccountItem = {
   token?: string
   cookies?: string
   username?: string
+  auth_type?: string
+  oauth_file?: string
   valid?: boolean
   inflight?: number
   max_inflight?: number
@@ -161,6 +166,8 @@ function statusNote(acc: AccountItem) {
 }
 
 function serviceOf(acc: AccountItem) {
+  if (acc.auth_type === "code_assist" || acc.source === "oauth_google") return "Google Code Assist"
+  if (acc.auth_type === "antigravity" || acc.source === "oauth_antigravity") return "Antigravity"
   return acc.service || acc.provider || "Gemini"
 }
 
@@ -377,6 +384,15 @@ export default function AccountsPage() {
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
   const deferredQuery = useDeferredValue(query)
 
+  // OAuth Management State
+  const [oauthModalOpen, setOauthModalOpen] = useState(false)
+  const [oauthProvider, setOauthProvider] = useState<"google" | "antigravity">("google")
+  const [oauthAuthUrl, setOauthAuthUrl] = useState("")
+  const [oauthLoadingUrl, setOauthLoadingUrl] = useState(false)
+  const [oauthReturnInput, setOauthReturnInput] = useState("")
+  const [oauthExchanging, setOauthExchanging] = useState(false)
+  const [oauthStatusData, setOauthStatusData] = useState<Record<string, any> | null>(null)
+
   const requireSessionKey = () => {
     if (getStoredApiKey()) return true
     toast.error("Silakan masukkan ADMIN_KEY atau API Key di menu 'Pengaturan Sistem' terlebih dahulu")
@@ -405,8 +421,83 @@ export default function AccountsPage() {
       .catch(err => toast.error(err instanceof Error ? err.message : "Gagal memuat daftar akun, periksa Kunci Sesi"))
   }
 
+  const loadOAuthStatus = () => {
+    if (!getStoredApiKey()) return
+    fetch(`${API_BASE}/api/admin/oauth/status`, { headers: getAuthHeader() })
+      .then(readAdminJSON)
+      .then(data => {
+        if (data && data.ok) {
+          setOauthStatusData(data.providers || null)
+        }
+      })
+      .catch(() => {})
+  }
+
+  const generateOAuthURL = (provider: "google" | "antigravity") => {
+    if (!requireSessionKey()) return
+    setOauthLoadingUrl(true)
+    fetch(`${API_BASE}/api/admin/oauth/url?provider=${provider}`, { headers: getAuthHeader() })
+      .then(readAdminJSON)
+      .then(data => {
+        setOauthLoadingUrl(false)
+        if (data.ok && data.url) {
+          setOauthAuthUrl(data.url)
+        } else {
+          toast.error(data.error || "Gagal mendapatkan tautan otorisasi Google")
+        }
+      })
+      .catch(err => {
+        setOauthLoadingUrl(false)
+        toast.error(err instanceof Error ? err.message : "Gagal meminta link OAuth")
+      })
+  }
+
+  const openOAuthModal = () => {
+    if (!requireSessionKey()) return
+    setOauthModalOpen(true)
+    setOauthReturnInput("")
+    loadOAuthStatus()
+    generateOAuthURL(oauthProvider)
+  }
+
+  const handleOAuthExchange = async () => {
+    if (!requireSessionKey()) return
+    const input = oauthReturnInput.trim()
+    if (!input) {
+      toast.error("Silakan tempel URL callback atau kode otorisasi terlebih dahulu")
+      return
+    }
+    setOauthExchanging(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/oauth/exchange`, {
+        method: "POST",
+        headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: oauthProvider,
+          url: input,
+          code: input,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      setOauthExchanging(false)
+      if (res.ok && data.ok) {
+        toast.success(`Akun ${data.email || ""} berhasil diotorisasi via ${oauthProvider === "antigravity" ? "Antigravity" : "Google Code Assist"}!`)
+        setOauthReturnInput("")
+        fetchAccounts(true)
+        loadOAuthStatus()
+        setOauthModalOpen(false)
+      } else {
+        toast.error(data.error || data.detail || "Penukaran kode otorisasi gagal")
+      }
+    } catch (err) {
+      setOauthExchanging(false)
+      toast.error(err instanceof Error ? err.message : "Koneksi gagal saat menukar token")
+    }
+  }
+
   useEffect(() => {
     fetchAccounts()
+    loadOAuthStatus()
   }, [])
 
   const stats = useMemo(() => {
@@ -797,6 +888,13 @@ export default function AccountsPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button
+              variant="default"
+              className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-md hover:opacity-95 font-bold"
+              onClick={openOAuthModal}
+            >
+              <Key className="mr-2 size-4" /> Login OAuth Google & Antigravity
+            </Button>
             <Button variant="outline" onClick={() => fetchAccounts(true)}>
               <RefreshCw className="mr-2 size-4" /> Segarkan
             </Button>
@@ -1095,6 +1193,169 @@ export default function AccountsPage() {
           </table>
         </div>
       </section>
+
+      {/* Modal OAuth Google & Antigravity */}
+      {oauthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl overflow-hidden rounded-[32px] border border-white/80 bg-card p-6 shadow-2xl dark:border-white/15">
+            <div className="flex items-center justify-between border-b pb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex size-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md">
+                  <Key className="size-5" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black tracking-tight">Otorisasi Akun Upstream OAuth</h3>
+                  <p className="text-xs text-muted-foreground">Hubungkan akun Google Code Assist atau Antigravity tanpa browser headless</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOauthModalOpen(false)}
+                className="rounded-full p-2 text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            {/* Provider Tabs */}
+            <div className="mt-5 grid grid-cols-2 gap-2 rounded-2xl bg-muted/60 p-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setOauthProvider("google")
+                  generateOAuthURL("google")
+                }}
+                className={`flex flex-col items-center justify-center rounded-xl py-2.5 text-xs font-bold transition ${
+                  oauthProvider === "google"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span>Google Code Assist (Gemini)</span>
+                <span className="text-[10px] font-normal opacity-70">gemini-3-flash, 2.5-flash, vision, thinking</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOauthProvider("antigravity")
+                  generateOAuthURL("antigravity")
+                }}
+                className={`flex flex-col items-center justify-center rounded-xl py-2.5 text-xs font-bold transition ${
+                  oauthProvider === "antigravity"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span>Google Antigravity CLI</span>
+                <span className="text-[10px] font-normal opacity-70">Claude Sonnet/Opus, Gemini 3.8</span>
+              </button>
+            </div>
+
+            {/* Status Provider Terhubung */}
+            {oauthStatusData && (
+              <div className="mt-4 rounded-2xl border bg-muted/30 p-3.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold">Status Berkas Kredensial Saat Ini:</span>
+                  {oauthStatusData[oauthProvider]?.configured ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="size-3.5" /> Terhubung: {oauthStatusData[oauthProvider]?.email || "Akun Terverifikasi"}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                      Belum Terhubung
+                    </span>
+                  )}
+                </div>
+                {oauthStatusData[oauthProvider]?.configured && (
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    Berkas: <code className="font-mono">{oauthStatusData[oauthProvider]?.file}</code> (terakhir diperbarui:{" "}
+                    {oauthStatusData[oauthProvider]?.modified_at
+                      ? new Date(oauthStatusData[oauthProvider]?.modified_at).toLocaleString()
+                      : "-"}
+                    )
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Langkah 1: Buka Auth Link */}
+            <div className="mt-5 space-y-2">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Langkah 1: Buka Otorisasi Google
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={oauthLoadingUrl ? "Membuat tautan otorisasi Google..." : oauthAuthUrl}
+                  className="flex-1 rounded-xl border bg-background px-3.5 py-2 text-xs font-mono text-muted-foreground focus:outline-none"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard.writeText(oauthAuthUrl)
+                    toast.success("Tautan otorisasi berhasil disalin")
+                  }}
+                  disabled={!oauthAuthUrl || oauthLoadingUrl}
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => window.open(oauthAuthUrl, "_blank")}
+                  disabled={!oauthAuthUrl || oauthLoadingUrl}
+                  className="bg-primary text-primary-foreground font-bold"
+                >
+                  <ExternalLink className="mr-1.5 size-3.5" /> Buka Halaman Login
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Klik tombol di atas, login dengan akun Google Anda, lalu izinkan akses.
+              </p>
+            </div>
+
+            {/* Langkah 2: Tempel Redirect URL */}
+            <div className="mt-5 space-y-2">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Langkah 2: Tempel Alamat Redirect (Return URL)
+              </div>
+              <input
+                value={oauthReturnInput}
+                onChange={e => setOauthReturnInput(e.target.value)}
+                placeholder="Tempel full URL dari address bar browser (contoh: http://127.0.0.1:8999/oauth2callback?code=4/0...) atau kode 4/0..."
+                className="w-full rounded-xl border bg-background px-3.5 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Setelah klik izinkan, browser akan diarahkan ke halaman lokal. Cukup salin seluruh isi URL dari address bar browser Anda dan tempel di kolom atas.
+              </p>
+            </div>
+
+            {/* Aksi Bawah */}
+            <div className="mt-6 flex items-center justify-end gap-3 border-t pt-4">
+              <Button variant="ghost" onClick={() => setOauthModalOpen(false)}>
+                Tutup
+              </Button>
+              <Button
+                variant="default"
+                onClick={handleOAuthExchange}
+                disabled={oauthExchanging || !oauthReturnInput.trim()}
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700"
+              >
+                {oauthExchanging ? (
+                  <>
+                    <RefreshCw className="mr-2 size-4 animate-spin" /> Menukar Token...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="mr-2 size-4" /> Tukar & Simpan Akun
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

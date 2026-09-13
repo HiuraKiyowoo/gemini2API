@@ -56,12 +56,13 @@ var (
 type upstreamRouter struct {
 	cookie   *QwenClient
 	oauth    *upstream.CodeAssistClient
+	antigrav *upstream.AntigravityClient
 	pool     *AccountPool
 	logger   *slog.Logger
 	settings Settings
 
 	mu         sync.Mutex
-	refreshByF map[string]string // oauth file path -> refresh token
+	refreshByF map[string]refreshCacheEntry // oauth file path -> cached read
 }
 
 // NewUpstreamClient builds the client-selection point used by App. When an
@@ -69,7 +70,12 @@ type upstreamRouter struct {
 // alongside the legacy cookie client.
 func NewUpstreamClient(pool *AccountPool, settings Settings, logger *slog.Logger) UpstreamClient {
 	cookie := NewQwenClient(pool, settings, logger)
-	router := &upstreamRouter{cookie: cookie, pool: pool, logger: logger, settings: settings, refreshByF: map[string]string{}}
+	router := &upstreamRouter{cookie: cookie, pool: pool, logger: logger, settings: settings, refreshByF: map[string]refreshCacheEntry{}}
+
+	// Antigravity is configured independently of Code Assist: an account pool
+	// may carry either transport, and the Antigravity credential must still load
+	// when the plain Code Assist file is absent.
+	router.installAntigravity()
 
 	oauthFile := settings.resolvedCodeAssistOAuthFile()
 	if !settings.CodeAssistEnabled {
@@ -104,6 +110,74 @@ func NewUpstreamClient(pool *AccountPool, settings Settings, logger *slog.Logger
 	return router
 }
 
+// installAntigravity wires the Antigravity unified-gateway transport
+// (daily-cloudcode-pa.googleapis.com) when it is enabled and a credential file
+// exists. It is off by default because the account currently sits behind
+// Google's VALIDATION_REQUIRED gate (see TEMUAN_ANTIGRAVITY.md); enabling it
+// costs nothing and the gate surfaces as a clear error instead of a hang.
+func (r *upstreamRouter) installAntigravity() {
+	if !r.settings.AntigravityEnabled {
+		return
+	}
+	antigravFile := r.settings.resolvedAntigravityOAuthFile()
+	if antigravFile == "" {
+		logInfo(r.logger, context.Background(),
+			"Antigravity transport tidak aktif: tidak ada data/antigravity_oauth.json")
+		return
+	}
+	antigrav, err := upstream.NewAntigravityClient(upstream.AntigravityOptions{
+		TokenURL:     strings.TrimSpace(os.Getenv("ANTIGRAVITY_TOKEN_URL")),
+		Endpoint:     strings.TrimSpace(os.Getenv("ANTIGRAVITY_ENDPOINT")),
+		ProdEndpoint: strings.TrimSpace(os.Getenv("ANTIGRAVITY_PROD_ENDPOINT")),
+		ClientID:     strings.TrimSpace(os.Getenv("ANTIGRAVITY_CLIENT_ID")),
+		ClientSecret: strings.TrimSpace(os.Getenv("ANTIGRAVITY_CLIENT_SECRET")),
+		Project:      strings.TrimSpace(os.Getenv("ANTIGRAVITY_PROJECT")),
+		OAuthFile:    antigravFile,
+		Attempts:     maxInt(r.settings.CodeAssistAttempts, 1),
+		RetryDelay:   time.Duration(maxInt(r.settings.CodeAssistRetryDelaySeconds, 1)) * time.Second,
+		RetryBudget:  time.Duration(maxInt(r.settings.CodeAssistRetryBudgetSeconds, 1)) * time.Second,
+	})
+	if err != nil {
+		logError(r.logger, context.Background(), "Gagal menyiapkan Antigravity transport",
+			"oauth_file", filepath.Base(antigravFile), "error", upstream.RedactCredentialMaterial(err.Error()))
+		return
+	}
+	antigrav.RefreshTokenFor = r.refreshTokenFor
+	r.antigrav = antigrav
+	// Probe once at boot so the verification gate is visible in the log
+	// immediately, not on the first user request.
+	ok, detail := antigrav.Verify(context.Background(), "")
+	if upstream.IsAntigravityValidationRequiredText(detail) {
+		logError(r.logger, context.Background(),
+			"Antigravity TERKUNCI Google VALIDATION_REQUIRED: akun harus verifikasi identitas (lihat TEMUAN_ANTIGRAVITY.md)",
+			"oauth_file", filepath.Base(antigravFile), "detail", upstream.RedactCredentialMaterial(detail))
+		return
+	}
+	if !ok {
+		logWarn(r.logger, context.Background(), "Antigravity transport terpasang tapi probe gagal",
+			"oauth_file", filepath.Base(antigravFile), "detail", upstream.RedactCredentialMaterial(detail))
+		return
+	}
+	logInfo(r.logger, context.Background(), "Antigravity transport aktif dan akun lolos verifikasi",
+		"oauth_file", filepath.Base(antigravFile), "detail", detail)
+}
+
+// usesAntigravity reports whether this account should go to the Antigravity
+// gateway. Selection is by account auth type so the two OAuth transports can
+// coexist in one pool.
+func (r *upstreamRouter) usesAntigravity(token string) bool {
+	if r.antigrav == nil {
+		return false
+	}
+	acc := r.accountFor(token)
+	if acc == nil {
+		// No pool entry: only route here when Antigravity is the sole OAuth
+		// transport configured, which is the single-account setup.
+		return r.oauth == nil
+	}
+	return strings.EqualFold(strings.TrimSpace(acc.AuthType), authTypeAntigravity)
+}
+
 // ---- account lookup ----
 
 // oauthAccounts lists accounts that should use the Code Assist transport.
@@ -121,8 +195,16 @@ func (r *upstreamRouter) oauthAccounts() []Account {
 }
 
 // usesCodeAssist reports whether a token handle belongs to an OAuth account.
+//
+// An account explicitly typed as Antigravity is excluded even though it shares
+// the "oauth:" token prefix: routing it at the plain Code Assist endpoint would
+// answer 404 for every Claude model and hide the real gate.
 func (r *upstreamRouter) usesCodeAssist(token string) bool {
 	if r.oauth == nil {
+		return false
+	}
+	if acc := r.accountFor(token); acc != nil &&
+		strings.EqualFold(strings.TrimSpace(acc.AuthType), authTypeAntigravity) {
 		return false
 	}
 	trimmed := strings.TrimSpace(token)
@@ -162,6 +244,11 @@ func (r *upstreamRouter) accountFor(token string) *Account {
 
 // refreshTokenFor maps a token handle onto the account's OAuth refresh token.
 // An empty return lets the transport fall back to its own file-loaded token.
+//
+// The credential file is re-read when its mtime/size changed, so a refresh
+// token rotated by another process (or by a previous rotation write-back) is
+// picked up instead of being served stale from this cache forever. A read
+// failure is NOT cached: the next request retries the read and can recover.
 func (r *upstreamRouter) refreshTokenFor(token string) string {
 	acc := r.accountFor(token)
 	if acc == nil {
@@ -184,24 +271,70 @@ func (r *upstreamRouter) refreshTokenFor(token string) string {
 		}
 		file = filepath.Join(dir, file)
 	}
+
+	stamp := fileStamp(file)
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if cached, ok := r.refreshByF[file]; ok {
-		return cached
+	cached, ok := r.refreshByF[file]
+	unchanged := ok && cached.stamp == stamp && cached.token != ""
+	refresh := cached.token
+	r.mu.Unlock()
+	if unchanged {
+		r.registerCredentialFile(refresh, file)
+		return refresh
 	}
-	refresh, err := upstream.LoadRefreshTokenFile(file)
+
+	loaded, err := upstream.LoadRefreshTokenFile(file)
 	if err != nil {
-		logWarn(r.logger, context.Background(), "Gagal membaca berkas OAuth Code Assist akun", "file", filepath.Base(file), "error", err)
-		r.refreshByF[file] = ""
+		logWarn(r.logger, context.Background(), "Gagal membaca berkas OAuth Code Assist akun",
+			"file", filepath.Base(file), "error", upstream.RedactCredentialMaterial(err.Error()))
+		// Do not poison the cache: leave the previous entry (if any) so a
+		// transient read error does not permanently disable the account.
+		if ok && cached.token != "" {
+			return cached.token
+		}
 		return ""
 	}
-	r.refreshByF[file] = refresh
-	return refresh
+	r.mu.Lock()
+	r.refreshByF[file] = refreshCacheEntry{token: loaded, stamp: stamp}
+	r.mu.Unlock()
+	r.registerCredentialFile(loaded, file)
+	return loaded
+}
+
+// registerCredentialFile tells the transport where a refresh token lives, so a
+// rotation reported by Google can be written back to the right file.
+func (r *upstreamRouter) registerCredentialFile(refresh, file string) {
+	if r.oauth == nil || refresh == "" || file == "" {
+		return
+	}
+	r.oauth.RegisterRefreshToken(refresh, file)
+}
+
+// refreshCacheEntry is one cached credential-file read plus the identity of the
+// file version it was read from.
+type refreshCacheEntry struct {
+	token string
+	stamp string
+}
+
+// fileStamp identifies a credential file version by size + mtime, which is
+// enough to notice a rotation without hashing the secret on every request.
+func fileStamp(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "missing"
+	}
+	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
 }
 
 // ---- UpstreamClient implementation ----
 
 func (r *upstreamRouter) selectClient(token string) (upstream.ChatClient, bool) {
+	// Antigravity first: both transports are OAuth and would otherwise be
+	// claimed by usesCodeAssist, which keys off the shared "oauth:" handle.
+	if r.usesAntigravity(token) {
+		return r.antigrav, true
+	}
 	if r.usesCodeAssist(token) {
 		return r.oauth, true
 	}
@@ -224,7 +357,11 @@ func (r *upstreamRouter) StreamChatLegacy(ctx context.Context, token, chatID str
 		return r.cookie.StreamChatLegacy(ctx, token, chatID, payload, onEvent)
 	}
 	model := r.oauthModelName(payload)
-	logInfo(r.logger, ctx, "Mulai aliran Code Assist", "chat_id", chatID, "requested_model", model, "resolved_model", upstream.ResolveCodeAssistModel(model))
+	transportName, resolved := "Code Assist", upstream.ResolveCodeAssistModel(model)
+	if r.usesAntigravity(token) {
+		transportName, resolved = "Antigravity", upstream.ResolveAntigravityModel(model)
+	}
+	logInfo(r.logger, ctx, "Mulai aliran "+transportName, "chat_id", chatID, "requested_model", model, "resolved_model", resolved)
 	err := client.StreamChat(ctx, token, chatID, payload, func(evt upstream.Event) error {
 		return onEvent(UpstreamEvent{
 			Type:          evt.Type,
@@ -328,18 +465,37 @@ func (r *upstreamRouter) VerifyToken(ctx context.Context, token string) bool {
 }
 
 func (r *upstreamRouter) VerifyTokenDetail(ctx context.Context, token string) TokenVerifyResult {
-	if r.usesCodeAssist(token) {
-		ok, detail := r.oauth.Verify(ctx, token)
+	verifier := r.verifierFor(token)
+	if verifier != nil {
+		ok, detail := verifier.Verify(ctx, token)
 		if ok {
 			return TokenVerifyResult{Valid: true, StatusCode: "active", Error: detail}
 		}
 		status := "unauthorized"
-		if strings.Contains(strings.ToLower(detail), "http 429") {
+		lower := strings.ToLower(detail)
+		if strings.Contains(lower, "http 429") {
 			status = "rate_limited"
+		}
+		if strings.Contains(lower, "validation_required") || strings.Contains(lower, "verify your account") {
+			// Not a broken credential: the Google account needs an identity
+			// check the owner must complete. Keep the detail (it carries the
+			// validation_url) so the admin UI can show what to do.
+			status = "verification_required"
 		}
 		return TokenVerifyResult{Valid: false, StatusCode: status, Error: detail}
 	}
 	return r.cookie.VerifyTokenDetail(ctx, token)
+}
+
+// verifierFor picks the transport that can answer "is this account usable?".
+func (r *upstreamRouter) verifierFor(token string) upstream.Verifier {
+	if r.usesAntigravity(token) {
+		return r.antigrav
+	}
+	if r.usesCodeAssist(token) {
+		return r.oauth
+	}
+	return nil
 }
 
 // httpStatusFromError maps an upstream error onto an HTTP status.
@@ -405,6 +561,26 @@ func loadOAuthAccounts(settings Settings) []Account {
 	if settings.CodeAssistEnabled {
 		if file := settings.resolvedCodeAssistOAuthFile(); file != "" {
 			add(codeAssistAccountEmail(file), file)
+		}
+	}
+	// Antigravity credential: same credential shape, different endpoint, so it
+	// is registered under its own auth type.
+	if settings.AntigravityEnabled {
+		if file := settings.resolvedAntigravityOAuthFile(); file != "" {
+			email := codeAssistAccountEmail(file)
+			if !seen[email] {
+				seen[email] = true
+				accounts = append(accounts, Account{
+					Email:      email,
+					Token:      oauthTokenPrefix + email,
+					AuthType:   authTypeAntigravity,
+					OAuthFile:  file,
+					Source:     "env",
+					EnvName:    "ANTIGRAVITY_OAUTH",
+					Username:   email,
+					StatusCode: "valid",
+				})
+			}
 		}
 	}
 	for _, item := range numberedEnvValues(codeAssistAccountEnvRe) {

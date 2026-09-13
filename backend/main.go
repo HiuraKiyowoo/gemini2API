@@ -9,6 +9,7 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -541,12 +542,29 @@ func (p *AccountPool) SetGlobalMaxInflight(value int) {
 	p.mu.Unlock()
 }
 
+// acquireDeadline bounds how long a request waits for a free account. A long
+// wait turns a transient upstream 429 into a client-visible hang (the caller
+// normally has a much shorter HTTP client timeout), so the pool gives up
+// quickly and the handler answers 429 instead of blocking.
+func (p *AccountPool) acquireDeadline(settings Settings) time.Duration {
+	seconds := settings.AccountAcquireTimeoutSeconds
+	if seconds <= 0 {
+		seconds = defaultAccountAcquireTimeoutSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// ErrAllAccountsBusy reports that every pool account is cooling down or
+// in-flight. Handlers map it onto HTTP 429 so clients retry instead of seeing a
+// generic 500.
+var ErrAllAccountsBusy = errors.New("all upstream accounts are rate limited or busy")
+
 func (p *AccountPool) Acquire(ctx context.Context, preferredEmail string) (*Account, error) {
 	return p.AcquireFor(ctx, preferredEmail, accountUsageChat)
 }
 
 func (p *AccountPool) AcquireFor(ctx context.Context, preferredEmail, usage string) (*Account, error) {
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(p.acquireDeadline(p.settings))
 	for {
 		p.mu.Lock()
 		acc := p.pickLockedFor(preferredEmail, usage)
@@ -560,6 +578,12 @@ func (p *AccountPool) AcquireFor(ctx context.Context, preferredEmail, usage stri
 		}
 		p.mu.Unlock()
 		if time.Now().After(deadline) {
+			// Distinguish "everything is rate limited" (retryable, 429) from a
+			// genuinely empty/invalid pool so the client gets an actionable
+			// status instead of a blanket 500.
+			if p.allAccountsRateLimited(usage) {
+				return nil, ErrAllAccountsBusy
+			}
 			return nil, errors.New("no available upstream account")
 		}
 		select {
@@ -568,6 +592,25 @@ func (p *AccountPool) AcquireFor(ctx context.Context, preferredEmail, usage stri
 		case <-time.After(150 * time.Millisecond):
 		}
 	}
+}
+
+// allAccountsRateLimited reports whether at least one usable account exists but
+// every such account is currently parked by a rate-limit cooldown.
+func (p *AccountPool) allAccountsRateLimited(usage string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := float64(time.Now().UnixNano()) / 1e9
+	usable := 0
+	for _, acc := range p.accounts {
+		if acc == nil || !acc.Valid || acc.ActivationPending || strings.TrimSpace(acc.Token) == "" {
+			continue
+		}
+		usable++
+		if acc.rateLimitedUntilFor(usage) <= now {
+			return false
+		}
+	}
+	return usable > 0
 }
 
 func (p *AccountPool) pickLocked(preferredEmail string) *Account {
@@ -706,6 +749,11 @@ func (p *AccountPool) MarkVerification(email string, result TokenVerifyResult) e
 // authTypeCodeAssist marks an account that authenticates with a Google OAuth
 // refresh token against cloudcode-pa.googleapis.com instead of browser cookies.
 const authTypeCodeAssist = "oauth_code_assist"
+
+// defaultAccountAcquireTimeoutSeconds bounds how long a request waits for a
+// pool account before failing fast. Kept small so a fully rate-limited pool
+// answers 429 promptly instead of hanging the client.
+const defaultAccountAcquireTimeoutSeconds = 15
 
 // IsOAuth reports whether this account uses the Code Assist OAuth transport.
 func (a *Account) IsOAuth() bool {
@@ -1826,6 +1874,7 @@ type Settings struct {
 	ToolRecoveryMaxAttempts                int
 	RateLimitCooldown                      int
 	AccountMinIntervalMS                   int
+	AccountAcquireTimeoutSeconds           int
 	RequestJitterMinMS                     int
 	RequestJitterMaxMS                     int
 	RateLimitBaseCooldown                  int
@@ -1869,7 +1918,36 @@ type Settings struct {
 	CodeAssistRetryDelaySeconds    int
 	CodeAssistModelCooldownSeconds int
 	CodeAssistRetryBudgetSeconds   int
+
+	// Antigravity transport (OAuth refresh_token -> daily-cloudcode-pa).
+	// One account serves Claude + Gemini + gpt-oss here. Off by default: the
+	// current account is behind Google's VALIDATION_REQUIRED gate.
+	AntigravityEnabled   bool
+	AntigravityOAuthFile string
 }
+
+// resolvedAntigravityOAuthFile returns the Antigravity credential path,
+// defaulting to <data>/antigravity_oauth.json only when that file exists.
+func (s Settings) resolvedAntigravityOAuthFile() string {
+	if v := strings.TrimSpace(s.AntigravityOAuthFile); v != "" {
+		if _, err := os.Stat(v); err != nil {
+			return ""
+		}
+		return v
+	}
+	if strings.TrimSpace(s.DataDir) == "" {
+		return ""
+	}
+	path := filepath.Join(s.DataDir, "antigravity_oauth.json")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
+// authTypeAntigravity marks a pool account that must use the Antigravity
+// gateway instead of the plain Code Assist endpoint.
+const authTypeAntigravity = "oauth_antigravity"
 
 // resolvedCodeAssistOAuthFile returns the OAuth credential path, defaulting to
 // <data>/google_oauth.json when unset.
@@ -1907,6 +1985,7 @@ func LoadSettings() Settings {
 		ToolRecoveryMaxAttempts:                clampInt(envInt("TOOL_RECOVERY_MAX_ATTEMPTS", 4), 1, 8),
 		RateLimitCooldown:                      600,
 		AccountMinIntervalMS:                   envInt("ACCOUNT_MIN_INTERVAL_MS", 0),
+		AccountAcquireTimeoutSeconds:           envInt("ACCOUNT_ACQUIRE_TIMEOUT_SECONDS", defaultAccountAcquireTimeoutSeconds),
 		RequestJitterMinMS:                     envInt("REQUEST_JITTER_MIN_MS", 0),
 		RequestJitterMaxMS:                     envInt("REQUEST_JITTER_MAX_MS", 0),
 		RateLimitBaseCooldown:                  envInt("RATE_LIMIT_BASE_COOLDOWN", 600),
@@ -1948,6 +2027,10 @@ func LoadSettings() Settings {
 		CodeAssistRetryDelaySeconds:    envInt("CODEASSIST_RETRY_DELAY_SECONDS", 13),
 		CodeAssistModelCooldownSeconds: envInt("CODEASSIST_MODEL_COOLDOWN_SECONDS", 60),
 		CodeAssistRetryBudgetSeconds:   envInt("CODEASSIST_RETRY_BUDGET_SECONDS", 120),
+
+		// Opt-in: ANTIGRAVITY_ENABLED=1 plus data/antigravity_oauth.json.
+		AntigravityEnabled:   envBool("ANTIGRAVITY_ENABLED", false),
+		AntigravityOAuthFile: envString("ANTIGRAVITY_OAUTH_FILE", filepath.Join(data, "antigravity_oauth.json")),
 	}
 	if v := strings.TrimSpace(os.Getenv("API_KEYS_FILE")); v != "" {
 		settings.APIKeysFile = v
@@ -2501,6 +2584,9 @@ func (app *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/accounts/{email}/activate", app.adminActivateAccount)
 	mux.HandleFunc("POST /api/admin/accounts/{email}/verify", app.adminVerifyAccount)
 	mux.HandleFunc("DELETE /api/admin/accounts/{email}", app.adminDeleteAccount)
+	mux.HandleFunc("GET /api/admin/oauth/url", app.adminOAuthURL)
+	mux.HandleFunc("POST /api/admin/oauth/exchange", app.adminOAuthExchange)
+	mux.HandleFunc("GET /api/admin/oauth/status", app.adminOAuthStatus)
 	mux.HandleFunc("GET /api/admin/settings", app.adminGetSettings)
 	mux.HandleFunc("PUT /api/admin/settings", app.adminUpdateSettings)
 	mux.HandleFunc("GET /api/admin/keys", app.adminGetKeys)
@@ -2616,11 +2702,28 @@ func (app *App) verifyAdmin(w http.ResponseWriter, r *http.Request) (string, boo
 		writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return "", false
 	}
-	if token != app.settings.AdminKey && !app.apiKeys[token] {
-		writeError(w, http.StatusForbidden, "Forbidden: Admin Key Mismatch")
-		return "", false
+	// Privilege separation. A downstream inference key must never confer admin.
+	//
+	// Before this check, admin accepted every key in app.apiKeys — which is the
+	// union of operator-managed keys AND keys loaded from GEMINI_API_KEYS /
+	// QWEN_API_KEYS / API_KEYS. Those env keys are handed to API consumers, so
+	// any one of them leaked granted full admin: create keys, import accounts,
+	// rewrite settings. With ADMIN_KEY unset the old code also let *any* key
+	// through, because the compared empty string never matched but apiKeys did.
+	//
+	// Admin now requires ADMIN_KEY exactly, or a key created through the admin
+	// panel itself (managedAPIKeys). When ADMIN_KEY is unset, admin is locked
+	// rather than implicitly granted — deny by default.
+	if adminKey := strings.TrimSpace(app.settings.AdminKey); adminKey != "" &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(adminKey)) == 1 {
+		return token, true
 	}
-	return token, true
+	if app.managedAPIKeys != nil && app.managedAPIKeys[token] {
+		return token, true
+	}
+	// Never echo the presented token or any configured key back to the client.
+	writeError(w, http.StatusForbidden, "Forbidden: Admin Key Mismatch")
+	return "", false
 }
 
 func extractAPIToken(r *http.Request) string {
@@ -4488,6 +4591,7 @@ func (app *App) accountErrorCooldown(lower string) int {
 
 func rateLimitCooldownSeconds(settings Settings, lower string) int {
 	lower = strings.ToLower(lower)
+	// Genuine daily/quota exhaustion: park until the next day.
 	if strings.Contains(lower, "today's usage") ||
 		strings.Contains(lower, "todays usage") ||
 		strings.Contains(lower, "daily usage") ||
@@ -4497,7 +4601,56 @@ func rateLimitCooldownSeconds(settings Settings, lower string) int {
 		nextDay := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 10, 0, 0, now.Location())
 		return maxInt(int(time.Until(nextDay).Seconds()), settings.RateLimitBaseCooldown)
 	}
+	// Per-model capacity throttling ("You have exhausted your capacity on this
+	// model. Your quota will reset after Ns.") is a SHORT, model-scoped limit.
+	// The Code Assist transport already parks that one model; parking the whole
+	// account for the daily default (600s) made every other model unusable and,
+	// with a single account, turned a transient 429 into a total outage.
+	// Honour the upstream reset hint instead, bounded to a small window so the
+	// next request fails over quickly.
+	if seconds := upstreamResetHintSeconds(lower); seconds > 0 {
+		return clampInt(seconds+5, 15, maxInt(settings.RateLimitBaseCooldown, 60))
+	}
+	if isShortLivedRateLimit(lower) {
+		return clampInt(settings.RateLimitBaseCooldown/20, 10, 30)
+	}
 	return settings.RateLimitBaseCooldown
+}
+
+// upstreamResetHintSeconds extracts the "reset after Ns" / "retry in Ns" hint
+// that cloudcode-pa 429 bodies carry, in seconds. Returns 0 when absent.
+func upstreamResetHintSeconds(lower string) int {
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`reset after\s+(\d+)\s*s`),
+		regexp.MustCompile(`reset(?:s)? in\s+(\d+)\s*s`),
+		regexp.MustCompile(`retry(?:ing)? in\s+(\d+)\s*s`),
+		regexp.MustCompile(`try again in\s+(\d+)\s*s`),
+	} {
+		if m := re.FindStringSubmatch(lower); len(m) == 2 {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// isShortLivedRateLimit reports a transient model/transport throttle that must
+// not park the whole account for the daily cooldown.
+func isShortLivedRateLimit(lower string) bool {
+	for _, marker := range []string{
+		"rate limit exceeded",
+		"ratelimitexceeded",
+		"too many requests",
+		"resource_exhausted",
+		"capacity on this model",
+		"quota will reset",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func isRateLimitErrorMessage(lower string) bool {
@@ -4747,6 +4900,49 @@ func (app *App) recordStandardRequest(ctx context.Context, req StandardRequest) 
 	}
 }
 
+// completionErrorStatus maps a completion failure onto the HTTP status a client
+// should see. A rate-limited pool is retryable (429), a bad model is 404, an
+// auth failure is 502 (it is an upstream credential problem, not the caller's);
+// everything else stays 500.
+func completionErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	if errors.Is(err, ErrAllAccountsBusy) {
+		return http.StatusTooManyRequests
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout
+	}
+	switch upstream.StatusCodeOf(err) {
+	case http.StatusTooManyRequests:
+		return http.StatusTooManyRequests
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return http.StatusBadGateway
+	case http.StatusNotFound:
+		return http.StatusNotFound
+	}
+	switch httpStatusFromError(err, 0) {
+	case http.StatusTooManyRequests:
+		return http.StatusTooManyRequests
+	case http.StatusNotFound:
+		return http.StatusNotFound
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return http.StatusBadGateway
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "no available upstream account") {
+		return http.StatusTooManyRequests
+	}
+	return http.StatusInternalServerError
+}
+
+func completionErrorMessage(err error) string {
+	if errors.Is(err, ErrAllAccountsBusy) {
+		return "all configured upstream accounts are cooling down after rate limiting; retry shortly"
+	}
+	return err.Error()
+}
+
 func (app *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	auth, ok := app.resolveAuth(w, r)
 	if !ok {
@@ -4772,7 +4968,7 @@ func (app *App) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	result, err := app.runCompletion(r.Context(), req, "")
 	if err != nil {
 		setRequestLogFields(r.Context(), "error", err.Error())
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, completionErrorStatus(err), completionErrorMessage(err))
 		return
 	}
 	toolNames := []string{}
@@ -7135,6 +7331,14 @@ type StandardRequest struct {
 	UpstreamFiles   []map[string]any
 	PreferredEmail  string
 	BoundAccount    *Account
+
+	// MaxTokens / Temperature carry the caller's generation controls through to
+	// the upstream request. OpenAI clients send max_tokens (or
+	// max_completion_tokens); the Code Assist transport reads max_output_tokens,
+	// so the value must be normalised here or it is silently dropped.
+	MaxTokens   int
+	Temperature float64
+	HasTemp     bool
 
 	RepeatedToolName          string
 	RepeatedToolSignature     string
