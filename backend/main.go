@@ -52,6 +52,8 @@ type App struct {
 	logger         *slog.Logger
 	accounts       *AccountPool
 	client         *QwenClient
+	upstream       UpstreamClient
+	images         *services.ImageDispatcher
 	chatPool       *ChatIDPool
 	apiKeys        map[string]bool
 	managedAPIKeys map[string]bool
@@ -170,6 +172,21 @@ func NewApp(settings Settings, logger *slog.Logger) (*App, error) {
 		return nil, err
 	}
 	app.client = NewQwenClient(app.accounts, settings, logger)
+	// The router is the single upstream seam: it dispatches each account to the
+	// Code Assist (OAuth) transport or the legacy cookie transport. Plain
+	// app.client stays for the cookie-only helpers (context pipeline, image).
+	app.upstream = NewUpstreamClient(app.accounts, settings, logger)
+	// Image generation is capability-routed: only an API key can drive
+	// Imagen, and only a cookie/web credential can drive the chat backend.
+	app.images = services.NewImageDispatcher()
+	app.images.Register(services.NewImagenBackend(services.ConfigFromEnv(settings.BaseDir)))
+	app.images.RegisterChat(func(ctx context.Context, req services.ImageRequest) (*services.ImageResult, error) {
+		urls, err := app.createImageURLsViaChat(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return &services.ImageResult{Provider: "chat", URLs: urls}, nil
+	})
 	app.chatPool = NewChatIDPool(app.client, app.accounts, settings, logger)
 	app.keepalive = NewKeepAliveService(logger)
 	app.activityLogs = newActivityLogBuffer(200)
@@ -261,6 +278,9 @@ type Account struct {
 	Username            string  `json:"username"`
 	Source              string  `json:"source,omitempty"`
 	EnvName             string  `json:"env_name,omitempty"`
+	AuthType            string  `json:"auth_type,omitempty"`
+	OAuthFile           string  `json:"oauth_file,omitempty"`
+	OAuthRefresh        string  `json:"-"`
 	ActivationPending   bool    `json:"activation_pending"`
 	StatusCode          string  `json:"status_code"`
 	LastError           string  `json:"last_error"`
@@ -330,7 +350,7 @@ func (p *AccountPool) Load() error {
 		data[i].migrateLegacyRateLimit(p.settings)
 		p.accounts = append(p.accounts, &data[i])
 	}
-	for _, envAcc := range loadEnvAccounts() {
+	for _, envAcc := range append(loadEnvAccounts(), loadOAuthAccounts(p.settings)...) {
 		envAcc.normalize()
 		envAcc.migrateLegacyRateLimit(p.settings)
 		replaced := false
@@ -683,9 +703,31 @@ func (p *AccountPool) MarkVerification(email string, result TokenVerifyResult) e
 	return p.Save()
 }
 
+// authTypeCodeAssist marks an account that authenticates with a Google OAuth
+// refresh token against cloudcode-pa.googleapis.com instead of browser cookies.
+const authTypeCodeAssist = "oauth_code_assist"
+
+// IsOAuth reports whether this account uses the Code Assist OAuth transport.
+func (a *Account) IsOAuth() bool {
+	if a == nil {
+		return false
+	}
+	authType := strings.ToLower(strings.TrimSpace(a.AuthType))
+	if authType == authTypeCodeAssist || authType == "oauth" || authType == "code_assist" {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.Token)), oauthTokenPrefix)
+}
+
+// oauthTokenPrefix marks a pool token handle as an OAuth Code Assist account.
+const oauthTokenPrefix = "oauth:"
+
 func (a *Account) normalize() {
 	if strings.TrimSpace(a.Source) == "" {
 		a.Source = "file"
+	}
+	if a.IsOAuth() && strings.TrimSpace(a.Token) == "" && strings.TrimSpace(a.Email) != "" {
+		a.Token = oauthTokenPrefix + strings.TrimSpace(a.Email)
 	}
 	if a.StatusCode == "" {
 		if a.ActivationPending {
@@ -1819,6 +1861,26 @@ type Settings struct {
 	ContextAllowedGeneratedExts      string
 	ContextAllowedUserExts           string
 	FrontendDist                     string
+
+	// Code Assist transport (OAuth refresh_token → cloudcode-pa.googleapis.com).
+	CodeAssistEnabled              bool
+	CodeAssistOAuthFile            string
+	CodeAssistAttempts             int
+	CodeAssistRetryDelaySeconds    int
+	CodeAssistModelCooldownSeconds int
+	CodeAssistRetryBudgetSeconds   int
+}
+
+// resolvedCodeAssistOAuthFile returns the OAuth credential path, defaulting to
+// <data>/google_oauth.json when unset.
+func (s Settings) resolvedCodeAssistOAuthFile() string {
+	if v := strings.TrimSpace(s.CodeAssistOAuthFile); v != "" {
+		return v
+	}
+	if strings.TrimSpace(s.DataDir) == "" {
+		return ""
+	}
+	return filepath.Join(s.DataDir, "google_oauth.json")
 }
 
 func LoadSettings() Settings {
@@ -1879,6 +1941,13 @@ func LoadSettings() Settings {
 		ContextAllowedGeneratedExts:            envString("CONTEXT_ALLOWED_GENERATED_EXTS", "txt,md,json,log"),
 		ContextAllowedUserExts:                 envString("CONTEXT_ALLOWED_USER_EXTS", "txt,md,json,log,xml,yaml,yml,csv,html,css,py,js,ts,java,c,cpp,cs,php,go,rb,sh,zsh,ps1,bat,cmd,pdf,doc,docx,ppt,pptx,xls,xlsx,png,jpg,jpeg,webp,gif,tiff,bmp,svg"),
 		FrontendDist:                           filepath.Join(base, "frontend", "dist"),
+
+		CodeAssistEnabled:              envBool("CODEASSIST_ENABLED", envBool("CODE_ASSIST_ENABLED", true)),
+		CodeAssistOAuthFile:            envString("CODEASSIST_OAUTH_FILE", envString("CODE_ASSIST_OAUTH_FILE", filepath.Join(data, "google_oauth.json"))),
+		CodeAssistAttempts:             envInt("CODEASSIST_ATTEMPTS", 3),
+		CodeAssistRetryDelaySeconds:    envInt("CODEASSIST_RETRY_DELAY_SECONDS", 13),
+		CodeAssistModelCooldownSeconds: envInt("CODEASSIST_MODEL_COOLDOWN_SECONDS", 60),
+		CodeAssistRetryBudgetSeconds:   envInt("CODEASSIST_RETRY_BUDGET_SECONDS", 120),
 	}
 	if v := strings.TrimSpace(os.Getenv("API_KEYS_FILE")); v != "" {
 		settings.APIKeysFile = v
@@ -1886,52 +1955,36 @@ func LoadSettings() Settings {
 	return settings
 }
 
-var modelMap = map[string]string{
-	// Primary Gemini Web lineup (upstream protocol: Sophomoresty/gemini-web2api)
-	"gemini-3.6-flash":               "gemini-3.6-flash",
-	"gemini-3.5-flash":               "gemini-3.6-flash",
-	"gemini-3.5-flash-thinking":      "gemini-3.5-flash-thinking",
-	"gemini-3.5-flash-thinking-lite": "gemini-3.5-flash-thinking-lite",
-	"gemini-3.1-pro":                 "gemini-3.1-pro",
-	"gemini-flash-lite":              "gemini-flash-lite",
-	"gemini-auto":                    "gemini-3.6-flash",
-	// Backward-compat aliases -> current generation
-	"gemini-2.5-flash":          "gemini-3.6-flash",
-	"gemini-2.5-pro":            "gemini-3.1-pro",
-	"gemini-2.5-flash-thinking": "gemini-3.5-flash-thinking",
-	"gemini-2.0-flash":          "gemini-3.6-flash",
-	"gemini-1.5-flash":          "gemini-3.6-flash",
-	"gemini-1.5-pro":            "gemini-3.1-pro",
-	"gemini-pro":                "gemini-3.1-pro",
-	"gemini-flash":              "gemini-3.6-flash",
-	"gpt-4o":                    "gemini-3.1-pro",
-	"gpt-4o-mini":               "gemini-3.6-flash",
-	"gpt-4":                     "gemini-3.1-pro",
-	"gpt-3.5-turbo":             "gemini-3.6-flash",
-	"claude-3-5-sonnet":         "gemini-3.1-pro",
-	"claude-3.5-sonnet":         "gemini-3.1-pro",
-	"claude-3-sonnet":           "gemini-3.1-pro",
-	"claude-3-haiku":            "gemini-3.6-flash",
-}
+// modelMap is derived from services.VerifiedModelCatalog() — the single source
+// of truth shared by GET /v1/models, the WebUI, and the transport layer.
+//
+// The names below are REAL models probed against the live backend. Ids that
+// returned HTTP 404 (e.g. the repo's old fictional gemini-3.6-flash /
+// gemini-3.5-flash-thinking / gemini-3.1-pro) are retained ONLY as aliases that
+// resolve onto a real model, so existing clients keep working without the
+// gateway ever transporting a non-existent id.
+var modelMap = services.ModelAliases()
 
+// resolveModel maps a requested name (with any gateway mode suffix such as
+// "-thinking") onto a model id that actually exists upstream. Mode suffixes are
+// preserved so the gateway still selects the right chat type; the base is always
+// a real catalog id.
 func resolveModel(name string) string {
 	trimmed := strings.TrimSpace(name)
-	if v, ok := modelMap[trimmed]; ok {
-		return v
+	if trimmed == "" {
+		return services.PrimaryChatModel()
 	}
-	if v, ok := modelMap[strings.ToLower(trimmed)]; ok {
-		return v
+	suffix := ""
+	base := trimmed
+	if idx := services.ModelModeSuffixIndex(trimmed); idx > 0 {
+		base = strings.TrimSpace(trimmed[:idx])
+		suffix = trimmed[idx:]
 	}
-	for _, suffix := range modelModeSuffixes() {
-		lowered := strings.ToLower(trimmed)
-		if strings.HasSuffix(lowered, suffix) && len(trimmed) > len(suffix) {
-			base := strings.TrimSpace(trimmed[:len(trimmed)-len(suffix)])
-			if mapped := resolveModel(base); mapped != base && mapped != "" {
-				return mapped + trimmed[len(trimmed)-len(suffix):]
-			}
-		}
+	resolved := services.ResolveModel(base, modelMap)
+	if resolved == "" || services.IsAbsentModel(resolved) {
+		resolved = services.TransportModelID(base, modelMap)
 	}
-	return trimmed
+	return resolved + suffix
 }
 
 type ModelMode struct {
@@ -2622,7 +2675,7 @@ func (app *App) acquireCompletionChat(ctx context.Context, req StandardRequest, 
 		if reused {
 			return acc, chatID, true, nil
 		}
-		chatID, err = app.client.CreateChat(ctx, acc.Token, req.ResolvedModel, req.ChatType)
+		chatID, err = app.upstream.CreateChat(ctx, acc.Token, req.ResolvedModel, req.ChatType)
 		if err == nil {
 			return acc, chatID, false, nil
 		}
@@ -2679,7 +2732,7 @@ func (app *App) runCompletionWithHooks(ctx context.Context, req StandardRequest,
 		}
 		return nil
 	}
-	err = app.client.StreamChat(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
+	err = app.upstream.StreamChatLegacy(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
 		result.Events = append(result.Events, evt)
 		if evt.Type != "delta" || evt.Content == "" {
 			return nil
@@ -4096,7 +4149,7 @@ func isAcceptableNoToolContinuationText(req StandardRequest, result CompletionRe
 }
 
 func (app *App) runToolMarkupRecoveryAttempt(ctx context.Context, acc *Account, req StandardRequest, prompt, reason string) (CompletionResult, error) {
-	chatID, err := app.client.CreateChat(ctx, acc.Token, req.ResolvedModel, req.ChatType)
+	chatID, err := app.upstream.CreateChat(ctx, acc.Token, req.ResolvedModel, req.ChatType)
 	if err != nil {
 		app.classifyAccountError(acc, err)
 		return CompletionResult{}, err
@@ -4110,7 +4163,7 @@ func (app *App) runToolMarkupRecoveryAttempt(ctx context.Context, acc *Account, 
 	if req.ToolEnabled {
 		sieve = toolcall.NewToolSieve(req.Tools)
 	}
-	err = app.client.StreamChat(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
+	err = app.upstream.StreamChatLegacy(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
 		result.Events = append(result.Events, evt)
 		if evt.Type != "delta" || evt.Content == "" {
 			return nil
@@ -4907,12 +4960,16 @@ func (app *App) handleListModels(w http.ResponseWriter, r *http.Request) {
 	if _, ok := app.resolveAuth(w, r); !ok {
 		return
 	}
-	upstream, err := app.client.ListModelsFromPool(r.Context())
-	if err == nil && len(upstream) > 0 {
-		writeJSON(w, http.StatusOK, buildOpenAIModelList(upstream))
-		return
+	// The verified catalog is authoritative: it lists only models proven to
+	// exist on the upstream backend, plus compatibility aliases that resolve
+	// onto them. Upstream-reported models are merged in but never replace it.
+	list := buildCatalogModelList()
+	if upstream, err := app.client.ListModelsFromPool(r.Context()); err == nil && len(upstream) > 0 {
+		for _, entry := range services.BuildOpenAIModelList(upstream)["data"].([]map[string]any) {
+			list = services.MergeModelEntry(list, entry)
+		}
 	}
-	writeJSON(w, http.StatusOK, buildFallbackModelList())
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (app *App) handleGetModel(w http.ResponseWriter, r *http.Request) {
@@ -5835,7 +5892,7 @@ func (app *App) handleImages(w http.ResponseWriter, r *http.Request) {
 	promptText := "Gunakan kemampuan pembuatan gambar untuk langsung membuat gambar, jangan hanya mengeluarkan deskripsi teks. Kembalikan URL gambar yang dapat diakses.\n" +
 		"Ukuran kanvas: " + size + " piksel. Rasio aspek: " + ratio + ". Buat sesuai ukuran dan rasio ini secara tepat.\n\nPermintaan pengguna: " + prompt
 
-	urls, lastErr := app.createImageURLs(r.Context(), model, promptText, map[string]any{"size": size, "ratio": ratio, "width": width, "height": height})
+	urls, lastErr := app.createImageURLsViaChat(r.Context(), services.ImageRequest{Prompt: promptText, Model: model, N: n, Width: width, Height: height, Ratio: ratio, Size: size})
 	if lastErr != nil {
 		app.logWarn(r.Context(), "图片生成失败", "error", lastErr)
 		writeError(w, upstreamMediaErrorStatus(lastErr), lastErr.Error())
@@ -5857,7 +5914,59 @@ func (app *App) handleImages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"created": time.Now().Unix(), "data": data})
 }
 
-func (app *App) createImageURLs(ctx context.Context, model, promptText string, imageOptions map[string]any) ([]string, error) {
+// imageAccountKind reports the credential kind of the account that image
+// generation would use. The image dispatcher uses it to pick a capable backend
+// (Imagen needs an API key; only cookie/web credentials can drive the chat
+// image path).
+func (app *App) imageAccountKind(ctx context.Context) string {
+	if app == nil || app.accounts == nil {
+		return ""
+	}
+	for _, acc := range app.accounts.Snapshot() {
+		if acc.OAuthFile != "" || strings.HasPrefix(acc.Token, "oauth:") {
+			return "oauth"
+		}
+	}
+	return "cookie"
+}
+
+func (app *App) createImageURLsViaChat(ctx context.Context, req services.ImageRequest) ([]string, error) {
+	// Image generation routes through the dispatcher first: it knows which
+	// credential types can actually produce images. Google OAuth (Code Assist)
+	// credentials provably cannot (HTTP 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT on
+	// every imagen-*:predict call), so when only those credentials are present
+	// the dispatcher fails loudly with the actionable "set IMAGEN_API_KEY"
+	// message instead of silently falling through to the cookie web path.
+	if app.images != nil {
+		res, err := app.images.Generate(ctx, services.ImageRequest{
+			Prompt:  req.Prompt,
+			Model:   req.Model,
+			N:       max(1, req.N),
+			Width:   req.Width,
+			Height:  req.Height,
+			Ratio:   req.Ratio,
+			Size:    req.Size,
+			Account: app.imageAccountKind(ctx),
+		})
+		if err == nil && res != nil && len(res.URLs) > 0 {
+			app.logInfo(ctx, "图片生成完成", "provider", res.Provider, "urls", len(res.URLs))
+			return res.URLs, nil
+		}
+		if err != nil {
+			// The dispatcher knows which credential types can actually produce
+			// images. When it reports that no capable backend exists, that is
+			// the real answer: do not mask it by retrying the cookie web path,
+			// which cannot serve an OAuth-only account and would end in a
+			// misleading "no image URL" error instead of the actionable one.
+			if errors.Is(err, services.ErrNoImageBackend) {
+				return nil, err
+			}
+			app.logWarn(ctx, "图片生成 dispatcher 失败, jatuh ke jalur chat", "error", err)
+		}
+	}
+
+	model, promptText := req.Model, req.Prompt
+	imageOptions := map[string]any{"size": req.Size, "ratio": req.Ratio, "width": req.Width, "height": req.Height}
 	var lastErr error
 	attempts := app.mediaRetryAttempts()
 	for attempt := 0; attempt < attempts; attempt++ {
@@ -5883,7 +5992,7 @@ func (app *App) createImageURLs(ctx context.Context, model, promptText string, i
 
 			payload := buildChatPayload(chatID, model, promptText, false, nil, "image_gen", imageOptions, nil, false)
 			parts := []string{}
-			if err := app.client.StreamChat(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
+			if err := app.upstream.StreamChatLegacy(ctx, acc.Token, chatID, payload, func(evt UpstreamEvent) error {
 				if evt.Content != "" {
 					parts = append(parts, evt.Content)
 				}
@@ -6921,6 +7030,12 @@ func buildModelEntry(modelID, baseModel string, capabilities map[string]bool, mo
 }
 
 func buildFallbackModelList() map[string]any {
+	return services.BuildFallbackModelList(modelMap)
+}
+
+// buildCatalogModelList is the authoritative /v1/models payload: the verified
+// catalog first, then every compatibility alias that resolves onto a real model.
+func buildCatalogModelList() map[string]any {
 	return services.BuildFallbackModelList(modelMap)
 }
 
@@ -8287,7 +8402,7 @@ func (c *QwenClient) DeleteChat(ctx context.Context, token, chatID string) bool 
 	return true
 }
 
-func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, payload map[string]any, onEvent func(UpstreamEvent) error) error {
+func (c *QwenClient) StreamChatLegacy(ctx context.Context, token, chatID string, payload map[string]any, onEvent func(UpstreamEvent) error) error {
 	cookies := ""
 	if c.pool != nil {
 		for _, acc := range c.pool.Snapshot() {
@@ -8474,9 +8589,30 @@ func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, paylo
 	return nil
 }
 
+// StreamChatEvents implements the upstream.ChatClient contract for the cookie
+// transport. The concrete method keeps its historical name (StreamChat) so the
+// existing call sites are untouched; this shim adapts the event type at the
+// interface boundary.
+func (c *QwenClient) StreamChat(ctx context.Context, token, chatID string, payload map[string]any, onEvent func(upstream.Event) error) error {
+	return c.StreamChatLegacy(ctx, token, chatID, payload, func(evt UpstreamEvent) error {
+		return onEvent(upstream.Event{
+			Type:          evt.Type,
+			Phase:         evt.Phase,
+			Content:       evt.Content,
+			ReasoningText: evt.ReasoningText,
+			Status:        evt.Status,
+			Extra:         evt.Extra,
+			Raw:           evt.Raw,
+		})
+	})
+}
+
+var _ upstream.ChatClient = (*QwenClient)(nil)
+
+
 func (c *QwenClient) PostChatCompletionOnce(ctx context.Context, token, chatID string, payload map[string]any, timeout time.Duration) (int, string, error) {
 	var sb strings.Builder
-	err := c.StreamChat(ctx, token, chatID, payload, func(evt UpstreamEvent) error {
+	err := c.StreamChatLegacy(ctx, token, chatID, payload, func(evt UpstreamEvent) error {
 		if evt.Type == "delta" && evt.Content != "" {
 			sb.WriteString(evt.Content)
 		}

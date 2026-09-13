@@ -182,7 +182,7 @@ export default function TestPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
-  const [model, setModel] = useState("gemini-3.6-flash")
+  const [model, setModel] = useState("gemini-3-flash-preview")
   const [availableModels, setAvailableModels] = useState<ModelOption[]>(FALLBACK_CHAT_MODELS)
   const [stream, setStream] = useState(true)
   const [answerMode, setAnswerMode] = useState<"thinking" | "fast">("thinking")

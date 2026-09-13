@@ -10,54 +10,6 @@ type ModelMode struct {
 	Mode           string
 }
 
-func DefaultModelAliases() map[string]string {
-	return map[string]string{
-		"gemini-3.6-flash":               "gemini-3.6-flash",
-		"gemini-3.5-flash":               "gemini-3.6-flash",
-		"gemini-3.5-flash-thinking":      "gemini-3.5-flash-thinking",
-		"gemini-3.5-flash-thinking-lite": "gemini-3.5-flash-thinking-lite",
-		"gemini-3.1-pro":                 "gemini-3.1-pro",
-		"gemini-flash-lite":              "gemini-flash-lite",
-		"gemini-auto":                    "gemini-3.6-flash",
-		"gemini-2.5-flash":               "gemini-3.6-flash",
-		"gemini-2.5-pro":                 "gemini-3.1-pro",
-		"gemini-2.5-flash-thinking":      "gemini-3.5-flash-thinking",
-		"gemini-2.0-flash":               "gemini-3.6-flash",
-		"gemini-1.5-flash":               "gemini-3.6-flash",
-		"gemini-1.5-pro":                 "gemini-3.1-pro",
-		"gemini-pro":                     "gemini-3.1-pro",
-		"gemini-flash":                   "gemini-3.6-flash",
-		"gpt-4o":                         "gemini-3.1-pro",
-		"gpt-4o-mini":                    "gemini-3.6-flash",
-		"gpt-4":                          "gemini-3.1-pro",
-		"gpt-3.5-turbo":                  "gemini-3.6-flash",
-		"claude-3-5-sonnet":              "gemini-3.1-pro",
-		"claude-3.5-sonnet":              "gemini-3.1-pro",
-		"claude-3-sonnet":                "gemini-3.1-pro",
-		"claude-3-haiku":                 "gemini-3.6-flash",
-	}
-}
-
-func ResolveModel(name string, aliases map[string]string) string {
-	trimmed := strings.TrimSpace(name)
-	if v, ok := aliases[trimmed]; ok {
-		return v
-	}
-	if v, ok := aliases[strings.ToLower(trimmed)]; ok {
-		return v
-	}
-	for _, suffix := range modelModeSuffixes() {
-		lowered := strings.ToLower(trimmed)
-		if strings.HasSuffix(lowered, suffix) && len(trimmed) > len(suffix) {
-			base := strings.TrimSpace(trimmed[:len(trimmed)-len(suffix)])
-			if mapped := ResolveModel(base, aliases); mapped != base && mapped != "" {
-				return mapped + trimmed[len(trimmed)-len(suffix):]
-			}
-		}
-	}
-	return trimmed
-}
-
 func ParseModelMode(modelID, defaultModel string) ModelMode {
 	requested := strings.TrimSpace(modelID)
 	if requested == "" {

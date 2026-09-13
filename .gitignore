@@ -57,3 +57,10 @@ qwen.mjs
 generate_*.py
 created_accounts.json
 tunnel.sh
+
+# OAuth Google tokens (jangan ke-commit)
+data/google_oauth.json
+data/google_pkce.json
+
+# Antigravity tokens
+/data/antigravity_oauth.json

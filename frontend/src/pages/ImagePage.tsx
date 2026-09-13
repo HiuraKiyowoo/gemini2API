@@ -56,7 +56,7 @@ export default function ImagePage() {
   const [loading, setLoading] = useState(false)
   const [images, setImages] = useState<GeneratedImage[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [model, setModel] = useState("gemini-3.6-flash-image")
+  const [model, setModel] = useState("imagen-4.0-generate-001")
   const [imageModels, setImageModels] = useState<ModelOption[]>(FALLBACK_IMAGE_MODELS)
 
   const selectedRatio = ASPECT_RATIOS.find(r => r.value === ratio)!
@@ -68,7 +68,7 @@ export default function ImagePage() {
       try {
         const options = filterImageModels(await fetchModelOptions())
         setImageModels(options)
-        setModel(current => chooseDefaultModel(options, current, "gemini-3.6-flash-image"))
+        setModel(current => chooseDefaultModel(options, current, "imagen-4.0-generate-001"))
       } catch {
         // keep fallback image model
       }

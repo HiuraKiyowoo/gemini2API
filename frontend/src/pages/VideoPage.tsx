@@ -59,7 +59,7 @@ export default function VideoPage() {
   const [loading, setLoading] = useState(false)
   const [videos, setVideos] = useState<GeneratedVideo[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [model, setModel] = useState("gemini-3.6-flash-video")
+  const [model, setModel] = useState("gemini-3-flash-preview-video")
   const [videoModels, setVideoModels] = useState<ModelOption[]>(FALLBACK_VIDEO_MODELS)
 
   const selectedRatio = ASPECT_RATIOS.find(r => r.value === ratio)!
@@ -71,7 +71,7 @@ export default function VideoPage() {
       try {
         const options = filterVideoModels(await fetchModelOptions())
         setVideoModels(options)
-        setModel(current => chooseDefaultModel(options, current, "gemini-3.6-flash-video"))
+        setModel(current => chooseDefaultModel(options, current, "gemini-3-flash-preview-video"))
       } catch {
         // keep fallback video model
       }
