@@ -304,7 +304,7 @@ export function chooseDefaultModel(options: ModelOption[], currentModel?: string
   if (preferredId && options.some(option => option.id === preferredId)) return preferredId
   const live = pool.find(option => option.upstream_verified && modelMode(option) === "chat")
   const base = live || pool.find(isBaseModelOption) || pool.find(option => modelMode(option) === "chat")
-  return base?.id || options[0]?.id || preferredId || "gemini-3-flash-preview"
+  return base?.id || options[0]?.id || preferredId || ""
 }
 
 export function groupModelOptions(options: ModelOption[]): ModelGroup[] {

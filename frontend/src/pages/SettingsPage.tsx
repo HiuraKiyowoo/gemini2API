@@ -203,27 +203,29 @@ export default function SettingsPage() {
       "contents": [{"parts": [{"text": "Hello"}]}]
     }'
 
-  # Images
+  # Images — requires IMAGEN_API_KEY (Google AI Studio key).
+  # Without that key the gateway fails loud with an actionable error; it never
+  # returns a fake image. OAuth Code Assist credentials are rejected (403).
   curl ${baseUrl}/v1/images/generations \\
     -H "Content-Type: application/json" \\
-    -H "Authorization: Bearer YOUR_API_KEY" \\
+    -H "Authorization: Bearer ***" \\
     -d '{
-      "model": "gemini-2.5-flash-image",
+      "model": "imagen-4.0-generate-001",
       "prompt": "A cyberpunk cat with neon lights, ultra realistic",
       "n": 1,
       "size": "1328x1328",
       "response_format": "url"
     }'
 
-  # Video
+  # Video — no model on this tier generates video. The endpoint exists for
+  # client compatibility but returns an error rather than a fake result.
   curl ${baseUrl}/v1/videos/generations \\
     -H "Content-Type: application/json" \\
-    -H "Authorization: Bearer YOUR_API_KEY" \\
+    -H "Authorization: Bearer ***" \\
     -d '{
-      "model": "gemini-2.5-flash-video",
+      "model": "gemini-3-flash-preview-video",
       "prompt": "Generate a slow-motion ocean-wave video.",
       "duration": 5,
-      "size": "1664x928",
       "ratio": "16:9",
       "response_format": "url"
     }'`

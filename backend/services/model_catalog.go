@@ -558,6 +558,12 @@ func BuildFallbackModelList(modelAliases map[string]string) map[string]any {
 		if !ok || alias == resolved {
 			continue
 		}
+		// A name that was probed HTTP 404 upstream is accepted on input (so old
+		// clients do not hard-break) but must NEVER be advertised in a model
+		// listing — that is what made the old lineup dishonest.
+		if IsAbsentModel(alias) {
+			continue
+		}
 		caps := map[string]bool{
 			"thinking":  spec.Thinking && strings.HasSuffix(strings.ToLower(alias), "-thinking"),
 			"search":    false,

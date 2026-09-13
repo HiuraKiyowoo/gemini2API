@@ -8649,16 +8649,18 @@ func (c *QwenClient) ListChats(ctx context.Context, token string, limit int) ([]
 }
 
 func (c *QwenClient) ListModelsFromPool(ctx context.Context) ([]map[string]any, error) {
-	return []map[string]any{
-		{"id": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash", "description": "Google Gemini 3.6 Flash - Fast, Multimodal (latest)"},
-		{"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash (Alias)", "description": "Alias of Gemini 3.6 Flash"},
-		{"id": "gemini-3.5-flash-thinking", "display_name": "Gemini 3.5 Flash Thinking", "description": "Google Gemini 3.5 Flash Thinking Mode"},
-		{"id": "gemini-3.5-flash-thinking-lite", "display_name": "Gemini 3.5 Flash Thinking Lite", "description": "Lightweight Thinking Mode"},
-		{"id": "gemini-3.1-pro", "display_name": "Gemini 3.1 Pro", "description": "Google Gemini 3.1 Pro - Advanced Reasoning (requires cookie)"},
-		{"id": "gemini-flash-lite", "display_name": "Gemini Flash Lite", "description": "Fast, lightweight Flash variant"},
-		{"id": "gpt-4o", "display_name": "GPT-4o (Gemini Pro Alias)", "description": "OpenAI GPT-4o mapped to Gemini 3.1 Pro"},
-		{"id": "claude-3-5-sonnet", "display_name": "Claude 3.5 Sonnet (Gemini Pro Alias)", "description": "Claude 3.5 Sonnet mapped to Gemini 3.1 Pro"},
-	}, nil
+	// Derived from the verified catalog — the single source of truth. This
+	// cookie-path fallback must never advertise a model that the catalog does
+	// not list as existing upstream (the old hardcoded lineup did exactly that).
+	models := []map[string]any{}
+	for _, spec := range services.VerifiedModelCatalog() {
+		models = append(models, map[string]any{
+			"id":           spec.ID,
+			"display_name": spec.DisplayName,
+			"description":  spec.Description,
+		})
+	}
+	return models, nil
 }
 
 func (c *QwenClient) VerifyToken(ctx context.Context, token string) bool {

@@ -59,7 +59,10 @@ export default function VideoPage() {
   const [loading, setLoading] = useState(false)
   const [videos, setVideos] = useState<GeneratedVideo[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [model, setModel] = useState("gemini-3-flash-preview-video")
+  // No model on this tier generates video (all gemini-*-video ids return 404,
+  // and there is no video backend). Keep the field empty and let the UI state
+  // that honestly instead of advertising a fictional default id.
+  const [model, setModel] = useState("")
   const [videoModels, setVideoModels] = useState<ModelOption[]>(FALLBACK_VIDEO_MODELS)
 
   const selectedRatio = ASPECT_RATIOS.find(r => r.value === ratio)!
@@ -71,7 +74,7 @@ export default function VideoPage() {
       try {
         const options = filterVideoModels(await fetchModelOptions())
         setVideoModels(options)
-        setModel(current => chooseDefaultModel(options, current, "gemini-3-flash-preview-video"))
+        setModel(current => chooseDefaultModel(options, current))
       } catch {
         // keep fallback video model
       }
@@ -79,7 +82,7 @@ export default function VideoPage() {
   }, [])
 
   const handleGenerate = async () => {
-    if (!prompt.trim() || loading) return
+    if (!prompt.trim() || !model || loading) return
     setLoading(true)
     setError(null)
 
@@ -189,8 +192,11 @@ export default function VideoPage() {
               value={model}
               onChange={e => setModel(e.target.value)}
               className="admin-input h-10 w-full px-3 py-2 text-sm font-mono"
-              disabled={loading}
+              disabled={loading || groupedModels.length === 0}
             >
+              {groupedModels.length === 0 && (
+                <option value="">Tidak ada model video tersedia</option>
+              )}
               {groupedModels.map(group => (
                 <optgroup key={group.family} label={group.family}>
                   {group.models.map(option => (
@@ -267,7 +273,7 @@ export default function VideoPage() {
 
           <Button
             onClick={handleGenerate}
-            disabled={loading || !prompt.trim()}
+            disabled={loading || !prompt.trim() || !model}
             className="ml-auto h-10 px-6 gap-2"
           >
             {loading

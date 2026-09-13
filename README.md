@@ -1,161 +1,210 @@
-# 🚀 gemini2API - Self-Hosted Google Gemini API Gateway
+# 🚀 gemini2API — Gateway API Google Gemini Self-Hosted
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8.svg?style=for-the-badge&logo=go&logoColor=white" alt="Go 1.24+" />
+  <img src="https://img.shields.io/badge/Go-1.26+-00ADD8.svg?style=for-the-badge&logo=go&logoColor=white" alt="Go 1.26+" />
   <img src="https://img.shields.io/badge/React-19-61DAFB.svg?style=for-the-badge&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/API-OpenAI%20%7C%20Anthropic%20%7C%20Gemini-green.svg?style=for-the-badge" alt="Multi-Protocol API" />
-  <img src="https://img.shields.io/badge/Engine-Google%20StreamGenerate-orange.svg?style=for-the-badge" alt="Google StreamGenerate" />
-  <img src="https://img.shields.io/badge/Platform-Termux%20%7C%20Linux%20VPS-blue.svg?style=for-the-badge" alt="Termux & Linux" />
+  <img src="https://img.shields.io/badge/Upstream-cloudcode--pa-orange.svg?style=for-the-badge" alt="cloudcode-pa" />
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=for-the-badge" alt="License GPL-3.0" />
 </p>
 
-Gateway AI mandiri berkinerja tinggi (*High-Performance Self-Hosted Gateway*) yang mengonversi kemampuan antarmuka web resmi **Google Gemini** (`gemini.google.com`) menjadi API standar yang kompatibel penuh dengan **OpenAI API**, **Anthropic Messages**, dan **Google Gemini REST API**.
+Gateway AI mandiri yang mengubah **Google Gemini Code Assist (cloudcode-pa)**
+menjadi API yang kompatibel dengan **OpenAI API**, **Anthropic Messages**, dan
+**Google Gemini REST API**. Backend Go, WebUI React, jalan minimal di Android
+Termux maupun VPS Linux.
 
-Dilengkapi reverse-engine protokol web **Google StreamGenerate RPC**, bypass signature **SAPISIDHASH**, ekstraksi CSRF otomatis (`SNlM0e`), dukungan **Tool Calling / Function Calling** untuk AI Coding Agent, serta WebUI modern berbahasa Indonesia yang ringan dan siap jalan di **Android Termux** maupun **Server VPS Linux**.
+> **Kejujuran model.** Daftar model yang diiklankan berasal dari **satu sumber
+> kebenaran**: `backend/services/model_catalog.go:VerifiedModelCatalog`. Hanya
+> model yang benar-benar ada di backend upstream yang diiklankan — lengkap
+> dengan status `live` / `quota_exhausted`. Nama lama yang terbukti 404 tidak
+> lagi diiklankan, hanya tetap diterima sebagai alias agar klien lama tak
+> putus. AutoGen/SDK yang memakai nama model asli akan selalu dapat model asli.
 
 ---
 
 ## 🌟 Fitur Utama
 
-- ⚡ **Google StreamGenerate RPC Native**: Mengintegrasikan protokol resmi web Google Gemini (`BardFrontendService/StreamGenerate`) dengan signature `SAPISIDHASH` dan ekstraksi token CSRF (`SNlM0e`) dinamis.
-- 🍪 **Manajemen Cookie Fleksibel**: Dukungan penuh input cookie via WebUI dashboard — bisa paste string cookie mentah maupun ekspor **JSON array langsung dari Cookie-Editor / EditThisCookie**.
-- 🛠️ **AI Agent & Tool Calling Support (100% Works)**: Kompatibel penuh dengan spesifikasi Function Calling OpenAI (`tools` & `tool_calls`) dan Anthropic (`tool_use`). Teruji sukses untuk autonomous agent seperti **Cline**, **Roo Code**, **Claude Code**, **Cursor**, dan **LangChain**.
-- 🎨 **Image Lab (Google Imagen 3)**: Mendukung pembuatan gambar AI via prompt teks maupun endpoint `/v1/images/generations` berbasis Google Imagen 3 bawaan Gemini.
-- 🔄 **Account Pool & Rotasi Otomatis**: Manajemen multi-akun dengan auto-failover, pelacakan rate limit, cooldown handling, dan rotasi round-robin.
-- 🎨 **WebUI Dashboard Modern**: Dashboard berbasis React 19 + Tailwind CSS + Lucide Icons yang bersih, responsif, dan 100% berbahasa Indonesia untuk mengelola akun, API key, konfigurasi runtime, dan uji coba interaktif.
-- 📱 **Termux & VPS Native**: Backend ditulis murni dalam bahasa **Go** dengan penggunaan RAM sangat minim (< 30MB) tanpa ketergantungan browser headless berat (Playwright/Chromium) untuk operasional API harian.
+- ⚡ **Transport cloudcode-pa (Code Assist) via OAuth Google**: refresh token
+  murni HTTP (tanpa browser), single-flight per token, auto write-back saat
+  Google merotasi refresh token.
+- 🔀 **Routing model dari katalog**: `model_catalog.go` menentukan transport
+  code, alias, dan varian mode (`-thinking`, `-search`) — bukan switch
+  hardcode. Nama 404 tidak pernah dikirim ke upstream.
+- 🧠 **Thinking / reasoning**: `generationConfig.thinkingConfig` (`8192` budget).
+  Teks reasoning muncul terpisah (part `"thought": true`) dan tidak disajikan
+  sebagai jawaban akhir.
+- 👁️ **Vision**: gambar via `inlineData` (input image), bukan image generation.
+- 📅 **Injeksi tanggal**: systemInstruction berisi tanggal berjalan supaya model
+  tidak menjawab tahun yang salah.
+- 🔄 **Account pool**: multi-akun, failover, cooldown rate-limit per model.
+- 🎨 **WebUI Dashboard**: React 19 + Tailwind + Lucide, bahasa Indonesia.
+- 🖼️ **Image generation (Imagen)**: **butuh `IMAGEN_API_KEY`** — lihat catatan
+  di bawah. Tanpa key itu, endpoint image **gagal loud**, bukan mengembalikan
+  output palsu.
 
 ---
 
-## 🏗️ Arsitektur & Alur Kerja
+## ⚡ Instalasi & Menjalankan
 
-```
-[AI Client / Agent (Cline, Roo Code, Chatbox, SDK)]
-                       │
-                       ▼  (OpenAI / Anthropic / Gemini Format)
-             [gemini2API Gateway :7860]
-  ├── 1. Autentikasi API Key Klien & Rate Limiter
-  ├── 2. Pool Manager: Pilih Akun Google Sehat (Round-Robin)
-  ├── 3. Injeksi Skema Tool Calling & System Prompt
-  └── 4. Format Protokol Web Google Gemini:
-         ├── Cookie Header (__Secure-1PSID, SAPISID, SID, dll.)
-         ├── Authorization: SAPISIDHASH {timestamp}_{sha1}
-         ├── Ekstraksi CSRF Token (SNlM0e / at) & Server Build (bl)
-         └── Payload 80-element Array (f.req)
-                       │
-                       ▼  (Direct HTTPS StreamGenerate)
-           [Google Gemini Web Server (gemini.google.com)]
-                       │
-                       ▼  (RPC Chunk Stream / wrb.fr packets)
-             [gemini2API Gateway :7860]
-  ├── 1. Parser wrb.fr Stream & Ekstraksi Teks Delta
-  ├── 2. Parser Tool Calling & Ekstraksi Argumen JSON
-  └── 3. Streaming Server-Sent Events (SSE) Standar OpenAI ke Klien
-                       │
-                       ▼
-[AI Client / Agent Menerima Respons / Eksekusi Tool Sempurna! 🎉]
-```
-
----
-
-## ⚡ Panduan Instalasi Cepat
-
-### 1. Instalasi di HP Android (Termux)
+### Build
 
 ```bash
-# Update paket Termux dan instal dependensi
-pkg update -y && pkg install git golang nodejs-lts -y
+# Backend Go
+cd backend && go build -o ../bin/gemini2api-backend . && cd ..
 
-# Clone repositori
-git clone https://github.com/HiuraKiyowoo/gemini2API.git
-cd gemini2API
-
-# Jalankan build backend dan frontend otomatis
+# Frontend (hasil ke frontend/dist, disajikan oleh backend)
 cd frontend && npm install && npm run build && cd ..
-cd backend && go build -trimpath -ldflags="-s -w" -o ../bin/gemini2api-backend . && cd ..
-
-# Berikan izin eksekusi pada skrip manajemen
-chmod +x start.sh stop.sh update.sh
 ```
 
-### 2. Jalankan Layanan
+### Jalankan
 
 ```bash
-# Menjalankan di background (Daemon)
-./start.sh -d
-
-# Memeriksa status log
-tail -f logs/output.log
-
-# Menghentikan layanan
-./stop.sh
+./start.sh -d      # daemon di background (log: logs/output.log)
+./start.sh         # foreground (Ctrl+C untuk stop)
+./stop.sh          # hentikan
 ```
 
-Akses Web Dashboard melalui browser di: **`http://localhost:7860`** (atau `http://IP_HP_ANDA:7860`).
+WebUI & API: **`http://127.0.0.1:7860`**. Version update: `./update.sh`.
 
-### 3. Cara Update ke Versi Terbaru 🔄
-
-```bash
-./update.sh
-```
+Untuk mode dev (build backend + Vite dev server sekaligus) ada
+`go run start-all.go` — dijalankan dari root repo.
 
 ---
 
-## 🔑 Konfigurasi & Cara Input Akun Google Gemini
+## 🔑 Konfigurasi Environment
 
-1. Buka WebUI di browser: `http://localhost:7860`.
-2. Masukkan Admin Key default: `admin123456` (dapat diubah di `.env` atau menu Pengaturan).
-3. Buka tab **Manajemen Akun**:
-   - Buka browser Anda di [gemini.google.com](https://gemini.google.com) (pastikan sudah login).
-   - Buka ekstensi **Cookie-Editor** (atau DevTools > Application > Cookies).
-   - Salin cookie akun Anda:
-     - **Opsi A (Paling Mudah)**: Klik tombol Export di Cookie-Editor (format JSON), lalu langsung paste ke kolom **Tempel Cookie Google / Token** di dashboard.
-     - **Opsi B (Format String)**: Salin string cookie mentah yang mengandung `__Secure-1PSID` dan `SAPISID`.
-   - Klik **Simpan / Login Akun**. Backend akan otomatis memvalidasi ke server Google dan mengaktifkan akun.
-4. Buka tab **API Key** untuk membuat key akses baru yang akan digunakan di aplikasi AI Agent Anda.
+Salin `.env.example` ke `.env` dan isi. Env var penting:
+
+| Env var | Wajib | Keterangan |
+|---|---|---|
+| `ADMIN_KEY` | Ya (untuk WebUI/admin) | Kunci admin WebUI & API admin. Kosong → warning di log, endpoint admin menolak. |
+| `CODE_ASSIST_CLIENT_SECRET` | Ya (untuk OAuth upstream) | Client secret OAuth gemini-cli. **Tidak di-commit.** |
+| `CODE_ASSIST_CLIENT_ID` | Opsional | Default memakai client ID gemini-cli bawaan. |
+| `IMAGEN_API_KEY` | Untuk image gen | Google AI Studio key. Tanpa ini image gen gagal loud. |
+| `BASE_DIR` | Opsional | Base dir untuk `data/` & `logs/` di luar Docker. Docker mengeset `/app`. |
+| `PORT` | Opsional | Default `7860`. |
+| `LOG_LEVEL` | Opsional | Default `INFO`. |
+
+Env lain (tuning streaming/retry/pool/context) ada di `.env.example` dengan
+komentar masing-masing. Docker Compose memakai `HOST_PORT`, `HOST_DATA_DIR`,
+`HOST_LOGS_DIR`.
+
+### Login OAuth Google
+
+Kredensial upstream memakai OAuth Google. Helper ada di root repo:
+
+```bash
+export CODE_ASSIST_CLIENT_SECRET="<client-secret>"
+python3 oauth_google.py url                # cetak URL authorize
+python3 oauth_google.py tukar "<url|code>" # tukar code -> simpan refresh_token
+python3 oauth_google.py refresh            # tes refresh token
+python3 daftar_akun_oauth.py               # daftarkan akun OAuth ke data/accounts.json
+```
+
+Refresh token disimpan di `data/google_oauth.json` (chmod 600, **gitignored** —
+jangan pernah di-commit atau di-echo). Helper Antigravity (opsional):
+`oauth_antigravity.py`.
 
 ---
 
-## 🌐 Endpoint API Utama
-
-Semua endpoint kompatibel penuh dengan format standar industri:
+## 🌐 Endpoint API
 
 | Protocol | Method | Endpoint | Deskripsi | Auth |
 |---|---|---|---|---|
-| **OpenAI** | `POST` | `/v1/chat/completions` | Chat Completions (Stream & Non-Stream, Tool Calling) | `Bearer <KEY>` |
-| **OpenAI** | `GET` | `/v1/models` | Daftar semua model yang tersedia | `Bearer <KEY>` |
-| **OpenAI** | `GET` | `/v1/models/{model}` | Detail kapabilitas model spesifik | `Bearer <KEY>` |
-| **OpenAI** | `POST` | `/v1/images/generations` | Pembuatan Gambar AI (Google Imagen 3) | `Bearer <KEY>` |
-| **Anthropic** | `POST` | `/v1/messages` | Format Pesan Anthropic Claude (`tool_use`) | `x-api-key` |
-| **Gemini** | `POST` | `/v1beta/models/{model}:generateContent` | Format Google Gemini API resmi | `x-goog-api-key` |
-| **Sistem** | `GET` | `/healthz` & `/readyz` | Healthcheck gateway & pool akun | Bebas |
+| **OpenAI** | `POST` | `/v1/chat/completions` | Chat Completions (stream & non-stream, tool calling) | `Bearer <KEY>` |
+| **OpenAI** | `GET` | `/v1/models` | Daftar model dari katalog terverifikasi | `Bearer <KEY>` |
+| **OpenAI** | `GET` | `/v1/models/{model}` | Detail kapabilitas model | `Bearer <KEY>` |
+| **OpenAI** | `POST` | `/v1/images/generations` | Image gen (Imagen; butuh `IMAGEN_API_KEY`) | `Bearer <KEY>` |
+| **OpenAI** | `POST` | `/v1/videos/generations` | Kompatibilitas klien video (tidak ada model video di tier ini) | `Bearer <KEY>` |
+| **Anthropic** | `POST` | `/v1/messages` | Format Anthropic (`tool_use`) | `x-api-key` |
+| **Gemini** | `POST` | `/v1beta/models/{model}:generateContent` | Format Google Gemini | `x-goog-api-key` |
+| **Sistem** | `GET` | `/healthz`, `/readyz` | Healthcheck | Bebas |
+
+Contoh:
+
+```bash
+curl http://127.0.0.1:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-lokal" \
+  -d '{"model":"gemini-3-flash-preview","messages":[{"role":"user","content":"Halo"}],"stream":true}'
+```
 
 ---
 
-## 📋 Daftar Model yang Didukung
+## 📋 Model yang Tersedia
 
-### 1. Model Dasar (Base Models)
-| Model ID | Deskripsi & Rekomendasi Penggunaan | Kapabilitas Utama |
-|---|---|---|
-| `gemini-3.6-flash` | **Model Rekomendasi Utama** ⚡ — Generasi terbaru, sangat cepat, kuota melimpah, ideal untuk coding agent (Cline, Roo, Claude Code). | Chat, Tool Use, Vision, Web Search |
-| `gemini-3.5-flash` | Alias dari `gemini-3.6-flash` (nama lama yang masih valid di Gemini Web). | Chat, Tool Use, Vision, Web Search |
-| `gemini-3.5-flash-thinking` | Mode penalaran mendalam (*deep thinking process*) sebelum memberikan jawaban akhir (~20k karakter output). | Chat, Thinking Process, Tool Use |
-| `gemini-3.5-flash-thinking-lite` | Versi ringan dari mode thinking. | Chat, Thinking Process |
-| `gemini-3.1-pro` | Model dengan kapasitas penalaran dan kedalaman logika tertinggi untuk instruksi kompleks (membutuhkan cookie akun valid). | Chat, Deep Reasoning, Tool Use |
-| `gemini-flash-lite` | Varian Flash yang cepat dan ringan (~10k karakter output). | Chat, Tool Use |
-| `gemini-auto` | Router otomatis Gemini Web (diarahkan ke `gemini-3.6-flash`). | Chat, Tool Use |
+Katalog = `backend/services/model_catalog.go:VerifiedModelCatalog`. Status per
+probe live terhadap cloudcode-pa (OAuth Code Assist tier):
 
-### 2. Suffix Fitur (Suffix Modes)
-- `-thinking`: Mengaktifkan penalaran mendalam (*deep thinking*) (contoh: `gemini-3.5-flash-thinking`).
-- `-search`: Memaksa Google Search live diaktifkan pada jawaban.
+| Model ID | Status | Family | Konteks | Kapabilitas terverifikasi |
+|---|---|---|---|---|
+| `gemini-3-flash-preview` | **live** | Gemini 3 | 1.048.576 | chat, tool use, vision, search, thinking ✅ |
+| `gemini-3.1-flash-lite` | **live** | Gemini 3 | 1.048.576 | chat, vision |
+| `gemini-2.5-flash-lite` | **live** | Gemini 2.5 | 1.048.576 | chat, vision |
+| `gemini-2.5-flash` | **kuota 429** | Gemini 2.5 | 1.048.576 | thinking terverifikasi (pernah 289k char / 129s) |
+| `gemini-3.1-flash-lite-preview` | **kuota 429** | Gemini 3 | 1.048.576 | — |
+| `gemini-2.5-pro` | **kuota 429** | Gemini 2.5 | 2.097.152 | thinking/vision/search (belum pernah tembus) |
+| `gemini-3-pro-preview` | **kuota 429** | Gemini 3 | 1.048.576 | thinking/vision/search (belum pernah tembus) |
+| `gemini-3.1-pro-preview` | **kuota 429** | Gemini 3 | 1.048.576 | thinking/vision/search (belum pernah tembus) |
 
-### 3. Alias Kompatibilitas Otomatis (Model Aliases)
-- **Legacy Gemini Aliases**: `gemini-2.5-flash` ➔ `gemini-3.6-flash`; `gemini-2.5-pro`, `gemini-pro`, `gemini-1.5-pro` ➔ `gemini-3.1-pro`; `gemini-2.5-flash-thinking`, `gemini-thinking` ➔ `gemini-3.5-flash-thinking`; `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-flash` ➔ `gemini-3.6-flash`
-- **OpenAI Aliases**: `gpt-4o`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `o1` ➔ diarahkan otomatis ke `gemini-3.1-pro`
-- **OpenAI Mini Aliases**: `gpt-4o-mini`, `gpt-3.5-turbo`, `o1-mini` ➔ diarahkan otomatis ke `gemini-3.6-flash`
-- **Anthropic Aliases**: `claude-3-5-sonnet`, `claude-3.5-sonnet`, `claude-sonnet-4-5` ➔ diarahkan otomatis ke `gemini-3.1-pro`; `claude-3-haiku` ➔ `gemini-3.6-flash`
+Catatan:
+- **`live`** = probe HTTP 200 + teks dihasilkan. **`kuota 429`** = model **ada**
+  upstream tetapi kuota kredensial ini sedang habis; kuota reset, jadi model
+  tetap diiklankan tetapi tidak pernah jadi default.
+- Varian `-thinking` disediakan hanya untuk model yang terbukti mengembalikan
+  thought text: `gemini-3-flash-preview` dan `gemini-2.5-flash`.
+- Nama **404 (tidak diiklankan, hanya menerima sebagai alias)**:
+  `gemini-3-flash`, `gemini-3.5-flash`, `gemini-3.1-pro-preview-customtools`,
+  `gemini-3-pro-image-preview`, `gemini-2.5-flash-image`, serta nama fiktif
+  lama `gemini-3.6-flash`, `gemini-3.5-flash-thinking`,
+  `gemini-3.5-flash-thinking-lite`, `gemini-3.1-pro`. Semuanya dipetakan ke
+  model asli bila dikirim klien.
+- Alias publik gemini-cli: `auto`, `pro`, `flash`, `flash-lite`. Alias
+  kompatibilitas OpenAI (`gpt-4o`, …) dan Anthropic (`claude-*`) juga didukung
+  dan diarahkan ke model asli.
+
+---
+
+## 🖼️ Catatan Image Generation (WAJIB dibaca)
+
+Image generation **tidak** bisa lewat kredensial OAuth Code Assist:
+
+- `generativelanguage.googleapis.com` menolak OAuth dengan **HTTP 403
+  `ACCESS_TOKEN_SCOPE_INSUFFICIENT`**.
+- Model `gemini-*-image*` di cloudcode-pa mengembalikan **HTTP 404** (tidak ada).
+- Tidak ada model Gemini di tier ini yang menghasilkan gambar/video.
+
+Satu-satunya jalur adalah **Imagen dengan API key** (Google AI Studio):
+
+```
+POST https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict
+Header: x-goog-api-key: <IMAGEN_API_KEY>
+```
+
+**Tanpa `IMAGEN_API_KEY`, endpoint `/v1/images/generations` sengaja GAGAL
+LOUD** (HTTP 500/503) dengan pesan actionable yang menyebut env var-nya:
+
+```
+no image backend configured: backend "imagen": Imagen API key is required for
+image generation: set the IMAGEN_API_KEY environment variable to a Google AI
+Studio (generativelanguage) API key, or supply one via
+PUT /api/admin/settings {"imagen_api_key": "..."}.
+```
+
+Itu **perilaku yang benar** — gateway memilih gagal jelas daripada memberi
+output palsu. **Jangan** mengubahnya menjadi gambar dummy. `IMAGEN_MODEL`
+mengoverride model (default `imagen-4.0-generate-001`).
+
+---
+
+## 🧪 Verifikasi
+
+Skrip bukti hidup ada di `tests/` (memanggil gateway yang sudah jalan) dan
+skrip probe upstream di `tools/`. Lihat `tests/README.md` dan `tools/README.md`.
+Ringkasan hasil probe live terakhir ada di `TEMUAN.md`.
 
 ---
 
 ## 📄 Lisensi
-Proyek ini didistribusikan di bawah lisensi **GNU General Public License v3.0 (GPL-3.0)**.
+
+**GNU General Public License v3.0 (GPL-3.0).**

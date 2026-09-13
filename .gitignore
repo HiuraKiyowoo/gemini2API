@@ -16,10 +16,12 @@ logs/
 legacy/
 *legacy*.py
 
-# Tests and scripts
-test_*.py
-add_account.py
-fix_*.py
+# Ad-hoc scratch scripts at repo root (tools/ and tests/ are tracked on purpose)
+/test_*.py
+/add_account.py
+/fix_*.py
+/createimage_*.py
+/generate_*.py
 
 # Env
 .env
@@ -40,7 +42,6 @@ fix_*.py
 *.sw?
 
 # local cleanup
-tests/
 docs/superpowers/
 *.tsbuildinfo
 bin/
@@ -54,7 +55,6 @@ Hermes/
 工具链长任务ifacts/
 qwen.mjs
 
-generate_*.py
 created_accounts.json
 tunnel.sh
 
