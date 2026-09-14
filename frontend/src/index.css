@@ -78,3 +78,16 @@
   .account-metric-grid > div > div:nth-child(2) { margin-top:10px; font-size:22px; }
   .page-intro button { font-size:9px; }
 }
+
+/* Accounts compatibility: keep Google Code Assist + Antigravity OAuth controls while using the compact canvas language. */
+.admin-hero { border-radius:8px; }
+.admin-card { border-radius:8px; }
+.admin-input { border-radius:6px; }
+.admin-card button:not([class*="rounded-full"]), .admin-hero button:not([class*="rounded-full"]) { border-radius:6px; }
+@media (max-width:760px) {
+  .admin-hero { padding:16px !important; }
+  .admin-card { padding:14px !important; }
+  .account-stat-row { grid-template-columns:repeat(2,minmax(0,1fr)); overflow:visible; gap:8px; }
+  .account-stat-row > * { min-width:0; }
+  .account-action-row { flex-wrap:wrap; overflow:visible; }
+}
