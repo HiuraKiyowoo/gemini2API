@@ -150,19 +150,19 @@ export default function TokensPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-[32px] border border-white/75 bg-card/82 p-6 shadow-[var(--shadow-lift)] backdrop-blur-sm">
+    <div className="space-y-5">
+      <section className="panel-surface page-intro">
         <div className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-accent/45 blur-3xl" />
         <div className="relative flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.28em] text-muted-foreground">API Key</div>
-            <h2 className="mt-2 text-4xl font-black tracking-tight">Distribusi API Key</h2>
+            <div className="mono-kicker">Collections / credentials</div>
+            <h2 className="mt-2 text-4xl font-black tracking-tight">API keys</h2>
             <p className="mt-2 max-w-2xl text-muted-foreground">
-              Kelola Bearer Key untuk klien downstream yang mengakses gateway Go (kompatibel dengan OpenAI, Anthropic, Gemini, Gambar, dan Video).
+              Credentials downstream yang terdaftar pada gateway. Nilai key tetap disamarkan di panel.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => { fetchKeys(); toast.success("Disegarkan") }} disabled={loading}>
+            <Button variant="outline" className="text-action" onClick={() => { fetchKeys(); toast.success("Daftar key diperbarui") }} disabled={loading}>
               <RefreshCw className={`mr-2 size-4 ${loading ? "animate-spin" : ""}`} /> Segarkan
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
@@ -172,17 +172,17 @@ export default function TokensPage() {
         </div>
       </section>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-[28px] border border-white/75 bg-card/82 p-5 shadow-[var(--shadow-soft)]">
-          <div className="text-sm text-muted-foreground">Jumlah API Key</div>
+      <div className="runtime-cards">
+        <div className="info-surface panel-surface">
+          <div className="info-label">Registered keys</div>
           <div className="mt-3 text-4xl font-black">{keys.length}</div>
         </div>
-        <div className="rounded-[28px] border border-white/75 bg-card/82 p-5 shadow-[var(--shadow-soft)]">
-          <div className="text-sm text-muted-foreground">Key Terbaru</div>
+        <div className="info-surface panel-surface">
+          <div className="info-label">Latest key</div>
           <div className="mt-3 truncate font-mono text-xl font-black">{latestKey ? maskKey(latestKey) : "Belum dibuat"}</div>
         </div>
-        <div className="rounded-[28px] border border-white/75 bg-card/82 p-5 shadow-[var(--shadow-soft)]">
-          <div className="text-sm text-muted-foreground">Metode Autentikasi</div>
+        <div className="info-surface panel-surface">
+          <div className="info-label">Accepted auth</div>
           <div className="mt-3 inline-flex items-center gap-2 rounded-full border bg-accent/70 px-3 py-1 text-sm font-bold text-accent-foreground">
             <ShieldCheck className="size-4" />
             Bearer / x-api-key
@@ -190,27 +190,28 @@ export default function TokensPage() {
         </div>
       </div>
 
-      <section className="overflow-hidden rounded-[30px] border border-white/75 bg-card/86 shadow-[var(--shadow-lift)]">
-        <div className="flex items-center justify-between border-b border-border/50 bg-muted/10 px-6 py-5">
+      <section className="endpoint-surface panel-surface">
+        <div className="table-head">
           <div>
-            <h3 className="text-xl font-black tracking-tight">Daftar API Key</h3>
-            <p className="text-sm text-muted-foreground">Key disamarkan secara default, salin untuk mendapatkan nilai lengkap. Key dari environment dihapus via file .env.</p>
+            <div className="mono-kicker">Credentials / managed</div>
+            <h3 className="text-xl font-black tracking-tight">Registered keys</h3>
+            <p className="text-sm text-muted-foreground">Key disamarkan secara default. Environment keys dikelola di server.</p>
           </div>
           <KeyRound className="size-8 text-muted-foreground/30" />
         </div>
         <div className="divide-y divide-border/50">
           {keys.length === 0 ? (
-            <div className="grid min-h-72 place-items-center p-8 text-center text-muted-foreground">
+            <div className="empty-canvas-state">
               <div>
                 <KeyRound className="mx-auto mb-4 size-12 opacity-30" />
-                <div className="font-semibold text-foreground">Belum Ada API Key</div>
-                <p className="mt-1 text-sm">Klik 'Buat Key' untuk membuat token akses baru atau tentukan melalui variabel lingkungan.</p>
+                <div className="font-semibold text-foreground">No keys returned</div>
+                <p className="mt-1 text-sm">Connect the backend or create a managed key to populate this collection.</p>
               </div>
             </div>
           ) : (
             keys.map((item, index) => (
-              <div key={item.key} className="grid gap-4 px-6 py-5 lg:grid-cols-[auto_1fr_auto] lg:items-center">
-                <div className="grid size-10 place-items-center rounded-2xl bg-muted font-mono text-sm font-black">{index + 1}</div>
+              <div key={item.key} className="endpoint-row key-row">
+                <div className="endpoint-icon blue font-mono text-sm font-black">{index + 1}</div>
                 <div className="min-w-0">
                   <div className="truncate font-mono text-sm font-bold">{maskKey(item.key)}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -244,7 +245,7 @@ export default function TokensPage() {
 
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-[28px] border border-white/75 bg-card p-5 shadow-[var(--shadow-lift)]">
+          <div className="w-full max-w-md panel-surface p-5 shadow-[var(--shadow-lift)]">
             <div className="flex items-center justify-between border-b border-border/50 pb-4">
               <div className="flex items-center gap-2">
                 <KeyRound className="size-5 text-primary" />

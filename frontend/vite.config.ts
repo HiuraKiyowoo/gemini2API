@@ -15,6 +15,7 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    allowedHosts: true,
     proxy: {
       '/api':       { target: backendTarget, changeOrigin: true, timeout: 0 },
       '/v1':        { target: backendTarget, changeOrigin: true, timeout: 0 },
